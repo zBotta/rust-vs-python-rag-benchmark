@@ -1,0 +1,48 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.hypothesis/
+
+# Virtual environments
+.venv
+
+# Rust build artifacts
+target/
+**/*.rs.bk
+Cargo.lock
+
+# uv / Python packaging
+.python-version
+uv.lock
+*.egg
+*.whl
+*.pyd
+*.pyo
+*.pyc
+*.pdb
+*.so
+*.dylib
+*.dll
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.lcov
+
+# Benchmark output
+output/
+benchmark_report.md
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
