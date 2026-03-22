@@ -75,24 +75,8 @@ fn main() {
     let embeddings: Vec<[f32; 384]> = match embedder::embed_chunks(&chunks) {
         Ok(e) => e,
         Err(e) => {
-            eprintln!(
-                "Warning: embedding failed ({}). Using random embeddings as fallback.",
-                e
-            );
-            // Fallback: random embeddings — index will build correctly but
-            // similarity scores will be meaningless (retrieval is random).
-            chunks
-                .iter()
-                .enumerate()
-                .map(|(i, _)| {
-                    let mut arr = [0f32; 384];
-                    for (j, v) in arr.iter_mut().enumerate() {
-                        // Deterministic pseudo-random using chunk index
-                        *v = ((i * 384 + j) as f32 * 0.001).sin();
-                    }
-                    arr
-                })
-                .collect()
+            eprintln!("Fatal: embedding failed: {}", e);
+            std::process::exit(1);
         }
     };
     let embedding_phase_ms = embed_start.elapsed().as_secs_f64() * 1000.0;
@@ -166,12 +150,24 @@ fn main() {
         // a. Embed query
         let query_embedding: [f32; 384] = match embedder::embed_chunks(&[question.clone()]) {
             Ok(mut e) if !e.is_empty() => e.remove(0),
+            Err(e) => {
+                let end_to_end_ms = e2e_start.elapsed().as_secs_f64() * 1000.0;
+                eprintln!("Warning: query embedding failed for query {}: {}", query_id, e);
+                query_metrics_list.push(QueryMetrics {
+                    query_id,
+                    end_to_end_ms,
+                    retrieval_ms: 0.0,
+                    ttft_ms: 0.0,
+                    generation_ms: 0.0,
+                    total_tokens: 0,
+                    failed: true,
+                    failure_reason: Some(format!("Embedding error: {}", e)),
+                });
+                continue;
+            }
             _ => {
-                let mut arr = [0f32; 384];
-                for (j, v) in arr.iter_mut().enumerate() {
-                    *v = (j as f32 * 0.001).sin();
-                }
-                arr
+                eprintln!("Warning: empty embedding for query {}", query_id);
+                continue;
             }
         };
 

@@ -16,4 +16,5 @@ dependencies = [
     "respx>=0.22.0",
     "sentence-transformers>=5.3.0",
     "tomli>=2.4.0",
+    "waitress>=3.0.2",
 ]

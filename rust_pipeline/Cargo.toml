@@ -20,7 +20,8 @@ text-splitter = { version = "0.29", features = ["tokenizers"] }
 tokenizers = { version = "0.22", default-features = false, features = ["http"] }
 fastembed = { version = "4", optional = true }
 instant-distance = "0.6"
-reqwest = { version = "0.12", features = ["blocking", "json", "native-tls"] }
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
+ureq = { version = "2", default-features = false }
 
 [dev-dependencies]
 proptest = "1"
