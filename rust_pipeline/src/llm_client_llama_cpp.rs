@@ -124,6 +124,7 @@ impl LlmClient for LlamaCppClient {
 /// Stub used when the `llama_cpp_backend` feature is not enabled.
 /// `main.rs` will never instantiate this — it exits with a clear error message.
 #[cfg(not(feature = "llama_cpp_backend"))]
+#[derive(Debug)]
 pub struct LlamaCppClient;
 
 #[cfg(not(feature = "llama_cpp_backend"))]
@@ -167,7 +168,7 @@ mod tests {
             "Expected error when model file does not exist"
         );
         // Both the real client and the stub return an error mentioning the path
-        let msg = result.unwrap_err().to_string();
+        let msg = result.err().unwrap().to_string();
         assert!(
             msg.contains("model.gguf") || msg.contains("llama_cpp backend"),
             "Error message should mention the model path or missing feature; got: {}",

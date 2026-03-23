@@ -119,6 +119,9 @@ class StressRunner:
                 qm = future.result()
                 with lock:
                     results.append(qm)
+                status = "FAIL" if qm.failed else "OK"
+                reason = f" — {qm.failure_reason}" if qm.failed else ""
+                print(f"  Stress query {qm.query_id}: {status}{reason}")
         self.last_wall_clock_s = time.perf_counter() - wall_start
 
         return results

@@ -43,6 +43,44 @@ from python_pipeline.metrics_collector import (
 from python_pipeline.stress_runner import StressRunner
 
 
+def _preflight_ollama(llm_host: str, llm_model: str) -> None:
+    """Check Ollama reachability and model availability before dispatching queries."""
+    import httpx
+    try:
+        resp = httpx.get(f"{llm_host}/api/tags", timeout=5.0)
+        resp.raise_for_status()
+    except Exception as exc:
+        print(f"ERROR: Ollama endpoint not reachable at {llm_host}: {exc}")
+        sys.exit(1)
+
+    models = [m["name"] for m in resp.json().get("models", [])]
+    if llm_model not in models:
+        print(f"ERROR: Model '{llm_model}' not found. Available: {models}")
+        sys.exit(1)
+
+    print(f"Preflight OK: model '{llm_model}' is available.")
+
+
+def _preflight_gguf(gguf_model_path: str) -> None:
+    """Check that the GGUF model file exists and is readable before loading."""
+    path = Path(gguf_model_path)
+    if not path.exists():
+        print(f"ERROR: GGUF model file not found: {gguf_model_path}")
+        sys.exit(1)
+    if not path.is_file():
+        print(f"ERROR: GGUF path is not a file: {gguf_model_path}")
+        sys.exit(1)
+    try:
+        with path.open("rb") as fh:
+            magic = fh.read(4)
+        if magic != b"GGUF":
+            print(f"WARNING: File does not start with GGUF magic bytes: {gguf_model_path}")
+    except OSError as exc:
+        print(f"ERROR: Cannot read GGUF model file: {exc}")
+        sys.exit(1)
+    print(f"Preflight OK: GGUF model file found at {gguf_model_path}")
+
+
 def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
     """Run the full Python RAG pipeline and write metrics_python.jsonl."""
 
@@ -71,6 +109,11 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
                 llm_host=cfg.llm_host,
                 model=cfg.llm_model,
             )
+
+    if cfg.llm_backend == "ollama_http":
+        _preflight_ollama(cfg.llm_host, cfg.llm_model)
+    elif cfg.llm_backend == "llama_cpp":
+        _preflight_gguf(cfg.gguf_model_path)
 
     # Ensure output directory exists
     output_dir = Path(cfg.output_dir)
@@ -176,6 +219,9 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
             )
 
         query_metrics_list.append(qm)
+        status = "FAIL" if qm.failed else "OK"
+        reason = f" — {qm.failure_reason}" if qm.failed else ""
+        print(f"  Query {i + 1}/{total_queries}: {status}{reason}")
 
     # 8. Compute p50/p95 from successful queries
     successful_latencies = [q.end_to_end_ms for q in query_metrics_list if not q.failed]

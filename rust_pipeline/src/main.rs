@@ -76,6 +76,59 @@ fn main() {
     };
 
     // -----------------------------------------------------------------------
+    // 1c. Preflight checks — validate LLM backend before loading data
+    // -----------------------------------------------------------------------
+    match cfg.llm_backend.as_str() {
+        "ollama_http" => {
+            let tags_url = format!("{}/api/tags", cfg.llm_host);
+            let disable_ssl = std::env::var("DISABLE_SSL_VERIFY")
+                .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+                .unwrap_or(false);
+            let client = reqwest::blocking::Client::builder()
+                .danger_accept_invalid_certs(disable_ssl)
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .expect("Failed to build HTTP client");
+            match client.get(&tags_url).send() {
+                Err(e) => {
+                    eprintln!("ERROR: Ollama endpoint not reachable at {}: {}", cfg.llm_host, e);
+                    std::process::exit(1);
+                }
+                Ok(resp) => {
+                    let body: serde_json::Value = resp.json().unwrap_or_default();
+                    let models: Vec<String> = body["models"]
+                        .as_array()
+                        .unwrap_or(&vec![])
+                        .iter()
+                        .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
+                        .collect();
+                    if !models.contains(&cfg.llm_model) {
+                        eprintln!(
+                            "ERROR: Model '{}' not found. Available: {:?}",
+                            cfg.llm_model, models
+                        );
+                        std::process::exit(1);
+                    }
+                    println!("Preflight OK: model '{}' is available.", cfg.llm_model);
+                }
+            }
+        }
+        "llama_cpp" | "llm_rs" => {
+            let path = std::path::Path::new(&cfg.gguf_model_path);
+            if !path.exists() {
+                eprintln!("ERROR: GGUF model file not found: {}", cfg.gguf_model_path);
+                std::process::exit(1);
+            }
+            if !path.is_file() {
+                eprintln!("ERROR: GGUF path is not a file: {}", cfg.gguf_model_path);
+                std::process::exit(1);
+            }
+            println!("Preflight OK: GGUF model file found at {}", cfg.gguf_model_path);
+        }
+        _ => {}
+    }
+
+    // -----------------------------------------------------------------------
     // 2. Load documents
     // -----------------------------------------------------------------------
     println!("Loading documents...");
