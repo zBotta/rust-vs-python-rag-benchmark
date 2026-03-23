@@ -143,6 +143,12 @@ sed -i.bak "s|^llm_backend\s*=.*|llm_backend     = \"ollama_http\"|" benchmark_c
 sed -i.bak "s|^enabled\s*=.*|enabled           = false|" benchmark_config.toml
 rm -f benchmark_config.toml.bak
 
+# Generate consolidated cross-scenario report from all JSONL outputs
+echo "==> Generating cross-scenario report..."
+uv run python report/generate_all_scenarios_report.py \
+    --output-dir "${OUTPUT_DIR}" \
+    --output "${OUTPUT_DIR}benchmark_report_all_scenarios.md"
+
 echo ""
 echo "========================================================"
 echo "  Full benchmark complete."

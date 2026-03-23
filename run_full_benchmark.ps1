@@ -149,6 +149,12 @@ Set-ConfigValue "llm_backend" "ollama_http"
 Set-StressEnabled $false
 Set-StressEnabled $false
 
+# Generate consolidated cross-scenario report from all JSONL outputs
+Write-Host "==> Generating cross-scenario report..." -ForegroundColor Cyan
+uv run python report\generate_all_scenarios_report.py `
+    --output-dir "$OutputDir" `
+    --output "$OutputDir\benchmark_report_all_scenarios.md"
+
 Write-Host ""
 Write-Host "========================================================" -ForegroundColor Magenta
 Write-Host "  Full benchmark complete." -ForegroundColor Green

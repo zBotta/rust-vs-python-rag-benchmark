@@ -4,20 +4,20 @@
 # --- Required keys ---
 dataset_name    = "wikimedia/wikipedia"
 dataset_subset  = "20231101.simple"
-num_documents   = 10
+num_documents   = 2000
 chunk_size      = 512
 chunk_overlap   = 64
 embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
 top_k           = 5
 llm_model       = "Llama-3.2-1B-Instruct-Q4_K_S:latest"
 llm_host        = "http://localhost:11434"
-llm_backend     = "ollama_http"
+llm_backend     = "llm_rs"
 gguf_model_path = "C:\\Users\\mbottari\\.models\\Llama-3.2-1B-Instruct-Q4_K_S.gguf"
-query_set_path  = "query_set_debug.json"
+query_set_path  = "query_set.json" # query_set_debug.json
 output_dir      = "output/"
 
 [stress_test]
 enabled           = false
-concurrency       = 8
-num_documents     = 10
-query_repetitions = 10
+concurrency       = 1 # For the moment concurrency > 1 crashes as the threads do not handle several workers (CPU-intense) or async (I/O)
+num_documents     = 1000
+query_repetitions = 6
