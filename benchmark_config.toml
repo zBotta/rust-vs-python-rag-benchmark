@@ -9,7 +9,15 @@ chunk_size      = 512
 chunk_overlap   = 64
 embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
 top_k           = 5
-llm_model       = "lfm2-8b"
+llm_model       = "qwen2.5:0.5b"
 llm_host        = "http://localhost:11434"
+llm_backend     = "ollama_http"
+gguf_model_path = "C:\\Users\\mbottari\\.models\\qwen2.5-0.5b-instruct-q4_k_m.gguf"
 query_set_path  = "query_set.json"
 output_dir      = "output/"
+
+[stress_test]
+enabled           = false
+concurrency       = 8
+num_documents     = 10000
+query_repetitions = 10

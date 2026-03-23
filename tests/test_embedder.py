@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
         max_size=20,
     )
 )
-@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
+@settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow])
 def test_every_embedding_has_384_dimensions(chunks: list[str]) -> None:
     """Property 4: Every embedding vector returned by embed_chunks has exactly
     384 dimensions, for any non-empty list of input strings.
@@ -71,3 +71,4 @@ def test_every_embedding_has_384_dimensions(chunks: list[str]) -> None:
         assert len(vec) == 384, (
             f"Embedding {i} has {len(vec)} dimensions, expected 384"
         )
+

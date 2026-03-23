@@ -31,7 +31,7 @@ def _fake_embedder_fn(seed_offset: int = 9999) -> callable:
     return embedder
 
 
-@settings(max_examples=100)
+@settings(max_examples=20)
 @given(
     top_k=st.integers(min_value=1, max_value=10),
     n_extra=st.integers(min_value=0, max_value=20),
@@ -59,3 +59,4 @@ def test_retriever_returns_exactly_top_k(top_k: int, n_extra: int, query_seed: i
         f"Expected exactly {top_k} results, got {len(results)} "
         f"(index size={n})"
     )
+

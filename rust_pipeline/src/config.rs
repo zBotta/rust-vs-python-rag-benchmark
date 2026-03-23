@@ -14,6 +14,9 @@ pub enum ConfigError {
     #[error("Missing required configuration key: '{0}'")]
     MissingKey(String),
 
+    #[error("Configuration validation error: {0}")]
+    Validation(String),
+
     #[error("Failed to read config file '{path}': {source}")]
     Io {
         path: String,
@@ -40,6 +43,29 @@ struct RawConfig {
     llm_host: Option<String>,
     query_set_path: Option<String>,
     output_dir: Option<String>,
+    // Optional with defaults
+    llm_backend: Option<String>,
+    gguf_model_path: Option<String>,
+    // Optional subsection
+    stress_test: Option<RawStressTestConfig>,
+}
+
+/// Raw TOML representation of the `[stress_test]` subsection.
+#[derive(Debug, Deserialize)]
+struct RawStressTestConfig {
+    enabled: Option<bool>,
+    concurrency: Option<u64>,
+    num_documents: Option<u64>,
+    query_repetitions: Option<u64>,
+}
+
+/// Validated stress test configuration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StressTestConfig {
+    pub enabled: bool,
+    pub concurrency: usize,
+    pub num_documents: usize,
+    pub query_repetitions: usize,
 }
 
 /// Validated benchmark configuration.
@@ -56,6 +82,9 @@ pub struct BenchmarkConfig {
     pub llm_host: String,
     pub query_set_path: String,
     pub output_dir: String,
+    pub llm_backend: String,
+    pub gguf_model_path: String,
+    pub stress_test: StressTestConfig,
 }
 
 /// Helper: extract a required `Option<String>` field or return `ConfigError::MissingKey`.
@@ -89,6 +118,35 @@ pub fn load_config(config_path: impl AsRef<Path>) -> Result<BenchmarkConfig, Con
 
     let raw: RawConfig = toml::from_str(&contents)?;
 
+    // Apply defaults for optional fields.
+    let llm_backend = raw.llm_backend.unwrap_or_else(|| "ollama_http".to_string());
+    let gguf_model_path = raw.gguf_model_path.unwrap_or_default();
+
+    // Validate: gguf_model_path is required for in-process backends.
+    if (llm_backend == "llama_cpp" || llm_backend == "llm_rs") && gguf_model_path.is_empty() {
+        return Err(ConfigError::MissingKey("gguf_model_path".to_string()));
+    }
+
+    // Parse optional [stress_test] subsection with documented defaults.
+    let stress_raw = raw.stress_test.unwrap_or(RawStressTestConfig {
+        enabled: None,
+        concurrency: None,
+        num_documents: None,
+        query_repetitions: None,
+    });
+    let stress_concurrency = stress_raw.concurrency.unwrap_or(8) as usize;
+    if stress_concurrency < 1 {
+        return Err(ConfigError::Validation(
+            "stress_test.concurrency must be >= 1".to_string(),
+        ));
+    }
+    let stress_test = StressTestConfig {
+        enabled: stress_raw.enabled.unwrap_or(false),
+        concurrency: stress_concurrency,
+        num_documents: stress_raw.num_documents.unwrap_or(10000) as usize,
+        query_repetitions: stress_raw.query_repetitions.unwrap_or(10) as usize,
+    };
+
     Ok(BenchmarkConfig {
         dataset_name: require_str!(raw, dataset_name),
         dataset_subset: require_str!(raw, dataset_subset),
@@ -101,6 +159,9 @@ pub fn load_config(config_path: impl AsRef<Path>) -> Result<BenchmarkConfig, Con
         llm_host: require_str!(raw, llm_host),
         query_set_path: require_str!(raw, query_set_path),
         output_dir: require_str!(raw, output_dir),
+        llm_backend,
+        gguf_model_path,
+        stress_test,
     })
 }
 
@@ -130,6 +191,11 @@ mod tests {
         "output_dir",
     ];
 
+    /// Optional keys with their documented default values (as TOML-formatted strings).
+    const OPTIONAL_KEYS_AND_DEFAULTS: &[(&str, &str)] = &[
+        ("llm_backend", "ollama_http"),
+        ("gguf_model_path", ""),
+    ];
     /// Build a complete valid TOML string.
     fn full_toml() -> String {
         r#"
@@ -208,27 +274,120 @@ output_dir      = "output/"
     // Property 16: Absent optional config key uses documented default
     // Feature: rust-vs-python-rag-benchmark, Property 16: Absent optional config key uses documented default
     // -----------------------------------------------------------------------
-    //
-    // Per the current design all keys are required; there are no optional keys
-    // with defaults yet. This property test verifies the invariant that a
-    // complete config (no keys absent) loads successfully — acting as a
-    // baseline for when optional keys are added in future tasks.
-    //
-    // When optional keys with defaults are introduced, this test will be
-    // extended to enumerate them and assert the default values.
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
 
-        /// A complete config with all required keys present must load without error.
+        /// For each optional key, omitting it from the config must result in the
+        /// documented default value being applied.
         ///
         /// Feature: rust-vs-python-rag-benchmark, Property 16: Absent optional config key uses documented default
         #[test]
-        fn prop_complete_config_loads_successfully(_seed in 0u32..100) {
-            // There are currently no optional keys; verify the full config always loads.
-            let f = write_temp(&full_toml());
+        fn prop_absent_optional_key_uses_default(
+            key_idx in 0usize..OPTIONAL_KEYS_AND_DEFAULTS.len()
+        ) {
+            let (key, expected_default) = OPTIONAL_KEYS_AND_DEFAULTS[key_idx];
+
+            // Build a TOML that omits the optional key.
+            let toml_content: String = full_toml()
+                .lines()
+                .filter(|line| {
+                    let trimmed = line.trim_start();
+                    !trimmed.starts_with(key)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let f = write_temp(&toml_content);
             let result = load_config(f.path());
-            prop_assert!(result.is_ok(), "Full config should load without error: {:?}", result);
+
+            prop_assert!(
+                result.is_ok(),
+                "Config without optional key '{}' should load successfully: {:?}",
+                key,
+                result
+            );
+
+            let cfg = result.unwrap();
+            let actual = match key {
+                "llm_backend" => cfg.llm_backend.clone(),
+                "gguf_model_path" => cfg.gguf_model_path.clone(),
+                _ => panic!("Unknown optional key: {}", key),
+            };
+            prop_assert_eq!(
+                actual.as_str(),
+                expected_default,
+                "Default for '{}' should be '{}', got '{}'",
+                key,
+                expected_default,
+                actual
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Property 21: gguf_model_path required for in-process backends
+    // Feature: rust-vs-python-rag-benchmark, Property 21: Config with llm_backend=llama_cpp or llm_rs and absent gguf_model_path → error naming gguf_model_path
+    // -----------------------------------------------------------------------
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        /// For any config where llm_backend is "llama_cpp" or "llm_rs" and
+        /// gguf_model_path is absent or empty string, load_config must return
+        /// a ConfigError whose message contains "gguf_model_path".
+        ///
+        /// Feature: rust-vs-python-rag-benchmark, Property 21: Config with llm_backend=llama_cpp or llm_rs and absent gguf_model_path → error naming gguf_model_path
+        #[test]
+        fn prop_gguf_model_path_required_for_in_process_backends(
+            backend_idx in 0usize..2usize,
+            gguf_present in proptest::bool::ANY,
+        ) {
+            let backend = if backend_idx == 0 { "llama_cpp" } else { "llm_rs" };
+
+            // Build a TOML with the in-process backend and either absent or empty gguf_model_path.
+            let gguf_line = if gguf_present {
+                // Empty string — treated as absent.
+                r#"gguf_model_path = """#.to_string()
+            } else {
+                // Key entirely absent — omit the line.
+                String::new()
+            };
+
+            let toml_content = format!(
+                r#"
+dataset_name    = "wikipedia"
+dataset_subset  = "20220301.simple"
+num_documents   = 1000
+chunk_size      = 512
+chunk_overlap   = 64
+embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
+top_k           = 5
+llm_model       = "llama3.2:3b"
+llm_host        = "http://localhost:11434"
+query_set_path  = "query_set.json"
+output_dir      = "output/"
+llm_backend     = "{backend}"
+{gguf_line}
+"#
+            );
+
+            let f = write_temp(&toml_content);
+            let result = load_config(f.path());
+
+            prop_assert!(
+                result.is_err(),
+                "Expected error for backend '{}' with absent/empty gguf_model_path, but got Ok",
+                backend
+            );
+
+            let err = result.unwrap_err();
+            let err_msg = err.to_string();
+            prop_assert!(
+                err_msg.contains("gguf_model_path"),
+                "Error message '{}' does not mention 'gguf_model_path'",
+                err_msg
+            );
         }
     }
 
@@ -244,6 +403,41 @@ output_dir      = "output/"
         assert_eq!(cfg.num_documents, 1000);
         assert_eq!(cfg.chunk_size, 512);
         assert_eq!(cfg.top_k, 5);
+        // stress_test defaults when section is absent
+        assert!(!cfg.stress_test.enabled);
+        assert_eq!(cfg.stress_test.concurrency, 8);
+        assert_eq!(cfg.stress_test.num_documents, 10000);
+        assert_eq!(cfg.stress_test.query_repetitions, 10);
+    }
+
+    #[test]
+    fn stress_test_section_parsed_correctly() {
+        let toml_content = format!(
+            "{}\n[stress_test]\nenabled = true\nconcurrency = 4\nnum_documents = 500\nquery_repetitions = 3\n",
+            full_toml()
+        );
+        let f = write_temp(&toml_content);
+        let cfg = load_config(f.path()).unwrap();
+        assert!(cfg.stress_test.enabled);
+        assert_eq!(cfg.stress_test.concurrency, 4);
+        assert_eq!(cfg.stress_test.num_documents, 500);
+        assert_eq!(cfg.stress_test.query_repetitions, 3);
+    }
+
+    #[test]
+    fn stress_test_concurrency_zero_returns_error() {
+        let toml_content = format!(
+            "{}\n[stress_test]\nconcurrency = 0\n",
+            full_toml()
+        );
+        let f = write_temp(&toml_content);
+        let err = load_config(f.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("concurrency"),
+            "Error should mention 'concurrency', got: {}",
+            msg
+        );
     }
 
     #[test]

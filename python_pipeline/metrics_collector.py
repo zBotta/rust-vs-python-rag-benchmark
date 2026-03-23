@@ -153,3 +153,94 @@ def deserialize_from_jsonl(input_path: str) -> PipelineMetrics:
         p50_latency_ms=summary.get("p50_latency_ms", 0.0),
         p95_latency_ms=summary.get("p95_latency_ms", 0.0),
     )
+
+
+# ---------------------------------------------------------------------------
+# Stress test metrics — Task 19
+# ---------------------------------------------------------------------------
+
+@dataclass
+class StressSummary:
+    concurrency: int
+    total_queries: int
+    queries_per_second: float
+    peak_rss_mb: float
+    p99_latency_ms: float
+    p50_latency_ms: float
+    p95_latency_ms: float
+    failure_count: int
+
+
+def compute_stress_summary(
+    query_metrics: list[QueryMetrics],
+    concurrency: int,
+    total_wall_clock_s: float,
+) -> StressSummary:
+    """Compute stress test summary metrics from a list of QueryMetrics.
+
+    Uses psutil to get peak RSS memory.
+    queries_per_second = len(query_metrics) / total_wall_clock_s
+    p50/p95/p99 computed from successful query latencies only.
+    """
+    import psutil  # imported here to avoid hard dependency at module level
+
+    queries_per_second = len(query_metrics) / total_wall_clock_s if total_wall_clock_s > 0 else 0.0
+    peak_rss_mb = psutil.Process().memory_info().rss / (1024 * 1024)
+
+    successful_latencies = sorted(
+        q.end_to_end_ms for q in query_metrics if not q.failed
+    )
+    p50, p95 = compute_percentiles(successful_latencies)
+    p99 = _percentile(successful_latencies, 99.0) if successful_latencies else 0.0
+    failure_count = sum(1 for q in query_metrics if q.failed)
+
+    return StressSummary(
+        concurrency=concurrency,
+        total_queries=len(query_metrics),
+        queries_per_second=queries_per_second,
+        peak_rss_mb=peak_rss_mb,
+        p99_latency_ms=p99,
+        p50_latency_ms=p50,
+        p95_latency_ms=p95,
+        failure_count=failure_count,
+    )
+
+
+def append_stress_summary_to_jsonl(summary: StressSummary, output_path: str) -> None:
+    """Append a stress_summary JSON record to an existing JSONL file."""
+    record = {
+        "type": "stress_summary",
+        "concurrency": summary.concurrency,
+        "total_queries": summary.total_queries,
+        "queries_per_second": summary.queries_per_second,
+        "peak_rss_mb": summary.peak_rss_mb,
+        "p99_latency_ms": summary.p99_latency_ms,
+        "p50_latency_ms": summary.p50_latency_ms,
+        "p95_latency_ms": summary.p95_latency_ms,
+        "failure_count": summary.failure_count,
+    }
+    with open(output_path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+def read_stress_summary_from_jsonl(input_path: str) -> Optional[StressSummary]:
+    """Read a JSONL file and return the stress_summary record if present, or None."""
+    path = Path(input_path)
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            if obj.get("type") == "stress_summary":
+                return StressSummary(
+                    concurrency=obj["concurrency"],
+                    total_queries=obj["total_queries"],
+                    queries_per_second=obj["queries_per_second"],
+                    peak_rss_mb=obj["peak_rss_mb"],
+                    p99_latency_ms=obj["p99_latency_ms"],
+                    p50_latency_ms=obj["p50_latency_ms"],
+                    p95_latency_ms=obj["p95_latency_ms"],
+                    failure_count=obj["failure_count"],
+                )
+    return None

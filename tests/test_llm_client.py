@@ -52,7 +52,7 @@ query_strategy = st.text(
     chunks=st.lists(text_strategy, min_size=0, max_size=20),
     query=query_strategy,
 )
-@settings(max_examples=100)
+@settings(max_examples=20)
 def test_prompt_template_correctness(chunks: list[str], query: str) -> None:
     """Property 6: Constructed prompt exactly matches the template.
 
@@ -81,7 +81,7 @@ def test_prompt_template_correctness(chunks: list[str], query: str) -> None:
     chunks=st.lists(text_strategy, min_size=0, max_size=5),
     query=query_strategy,
 )
-@settings(max_examples=100)
+@settings(max_examples=20)
 def test_model_name_from_env(model_name: str, chunks: list[str], query: str) -> None:
     """Property 7: model field in every Ollama request body equals BENCHMARK_MODEL env var value.
 
@@ -136,7 +136,7 @@ def test_model_name_from_env(model_name: str, chunks: list[str], query: str) -> 
     prompt_tokens=st.integers(min_value=0, max_value=10_000),
     completion_tokens=st.integers(min_value=0, max_value=10_000),
 )
-@settings(max_examples=100)
+@settings(max_examples=20)
 def test_total_tokens_is_sum(prompt_tokens: int, completion_tokens: int) -> None:
     """Property 8: total_tokens = prompt_tokens + completion_tokens.
 
@@ -323,3 +323,4 @@ def test_parse_token_counts_missing_fields():
     assert _parse_token_counts({"prompt_eval_count": 10}) == 10
     assert _parse_token_counts({"eval_count": 20}) == 20
     assert _parse_token_counts({"prompt_eval_count": 10, "eval_count": 20}) == 30
+

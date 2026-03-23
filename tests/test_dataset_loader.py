@@ -56,7 +56,7 @@ class TestLoadDocumentsCount(unittest.TestCase):
         load_documents("wikipedia", "20220301.simple", 1)
 
         mock_fn.assert_called_once_with(
-            "wikipedia", "20220301.simple", split="train", streaming=True
+            "wikipedia", "20220301.simple", split="train", streaming=True, trust_remote_code=False
         )
 
     @patch(_IMPORT_PATCH)
@@ -117,3 +117,4 @@ class TestLoadDocumentsNetworkFailure(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

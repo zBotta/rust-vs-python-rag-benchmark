@@ -30,7 +30,8 @@ uv init --python ">=3.11" --no-workspace 2>&1 | Out-Null
 $ErrorActionPreference = "Stop"
 
 Write-Host "==> Installing Python dependencies..." -ForegroundColor Cyan
-uv add langchain-text-splitters datasets sentence-transformers hnswlib httpx matplotlib numpy pytest hypothesis respx tomli
+uv add langchain-text-splitters datasets hnswlib httpx matplotlib numpy pytest hypothesis respx tomli `
+    onnxruntime tokenizers psutil llama-cpp-python pyarrow sentence-transformers waitress
 
 Write-Host "==> Syncing environment..." -ForegroundColor Cyan
 uv sync

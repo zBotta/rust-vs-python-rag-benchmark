@@ -77,3 +77,4 @@ def test_readme_exists_and_contains_prerequisite_sections():
     # Must have a Prerequisites section
     assert "Prerequisites" in content or "prerequisites" in content, \
         "README.md must contain a Prerequisites section"
+

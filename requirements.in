@@ -1,11 +1,18 @@
-# Direct dependencies (unpinned) — used with: uv add -r requirements.in -c requirements.txt
+# Direct dependencies (unpinned) — used as a reference for uv add
+# The actual environment is managed by uv (pyproject.toml + uv.lock).
+# To add a new dependency: uv add <package>
+# To regenerate a pinned snapshot: see requirements.txt
+
 datasets
-sentence-transformers
 langchain-text-splitters
 hnswlib
 httpx
 matplotlib
 numpy
+onnxruntime
+tokenizers
+psutil
+llama-cpp-python
 pytest
 hypothesis
 respx

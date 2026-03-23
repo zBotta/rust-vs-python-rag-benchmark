@@ -6,34 +6,32 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# 0. Start embedding server (used by Rust pipeline)
-echo "==> Starting embedding server..."
-uv run python embedding_server.py &
-EMBED_PID=$!
-trap "echo '==> Stopping embedding server...'; kill $EMBED_PID 2>/dev/null" EXIT
+# ---------------------------------------------------------------------------
+# 0. Read llm_backend from benchmark_config.toml
+# ---------------------------------------------------------------------------
+LLM_BACKEND=$(grep -E '^llm_backend\s*=' benchmark_config.toml \
+    | head -1 | sed 's/.*=\s*"\(.*\)".*/\1/')
+echo "==> LLM backend: ${LLM_BACKEND}"
 
-# Wait until server is ready
-for i in $(seq 1 30); do
-    sleep 2
-    if curl -sf http://127.0.0.1:8765/health > /dev/null 2>&1; then
-        echo "Embedding server ready."
-        break
-    fi
-    if [ $i -eq 30 ]; then
-        echo "ERROR: Embedding server did not start in time." >&2
-        exit 1
-    fi
-done
+OUTPUT_DIR=$(grep -E '^output_dir\s*=' benchmark_config.toml \
+    | head -1 | sed 's/.*=\s*"\(.*\)".*/\1/')
+OUTPUT_DIR="${OUTPUT_DIR:-output/}"
 
-# 1. Run Python pipeline
+# ---------------------------------------------------------------------------
+# 1. Run Python pipeline (skipped automatically when llm_backend = "llm_rs")
+# ---------------------------------------------------------------------------
 echo "==> Running Python pipeline..."
 uv run python -m python_pipeline.pipeline
 
-# 2. Wait 10 seconds cool-down
+# ---------------------------------------------------------------------------
+# 2. Cool-down between pipeline runs (Requirement 7.4)
+# ---------------------------------------------------------------------------
 echo "Waiting 10 seconds for LLM server to drain..."
 sleep 10
 
+# ---------------------------------------------------------------------------
 # 3. Ensure parquet dataset is available for the Rust pipeline
+# ---------------------------------------------------------------------------
 PARQUET_FILE="./data/20231101.simple/train-00000-of-00001.parquet"
 if [ ! -f "$PARQUET_FILE" ]; then
     echo "==> Parquet dataset not found. Downloading..."
@@ -42,7 +40,9 @@ else
     echo "==> Parquet dataset already present, skipping download."
 fi
 
+# ---------------------------------------------------------------------------
 # 4. Run Rust pipeline
+# ---------------------------------------------------------------------------
 echo "==> Running Rust pipeline..."
 RUST_BIN="./target/release/rust_pipeline"
 if [ ! -f "$RUST_BIN" ]; then
@@ -51,9 +51,15 @@ if [ ! -f "$RUST_BIN" ]; then
 fi
 "$RUST_BIN"
 
+# ---------------------------------------------------------------------------
 # 5. Run report generator
+# ---------------------------------------------------------------------------
 echo "==> Generating report..."
-uv run python report/generate_report.py
+uv run python report/generate_report.py \
+    --python-jsonl "${OUTPUT_DIR}metrics_python_${LLM_BACKEND}.jsonl" \
+    --rust-jsonl   "${OUTPUT_DIR}metrics_rust_${LLM_BACKEND}.jsonl" \
+    --output       "${OUTPUT_DIR}benchmark_report_${LLM_BACKEND}.md" \
+    --llm-backend  "${LLM_BACKEND}"
 
 echo ""
-echo "Benchmark complete. See benchmark_report.md for results."
+echo "Benchmark complete. See ${OUTPUT_DIR}benchmark_report_${LLM_BACKEND}.md for results."

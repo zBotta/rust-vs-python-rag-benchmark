@@ -19,20 +19,10 @@ if os.environ.get("DISABLE_SSL_VERIFY", "").lower() in ("1", "true", "yes"):
     os.environ["REQUESTS_CA_BUNDLE"] = ""
     os.environ["SSL_CERT_FILE"] = ""
     os.environ["HF_HUB_DISABLE_SSL_VERIFICATION"] = "1"
-    # Patch httpx globally before huggingface_hub imports it
-    import httpx
-    _orig_client = httpx.Client.__init__
-    def _patched_client(self, *a, **kw):
-        kw.setdefault("verify", False)
-        _orig_client(self, *a, **kw)
-    httpx.Client.__init__ = _patched_client  # type: ignore[method-assign]
-    _orig_async = httpx.AsyncClient.__init__
-    def _patched_async(self, *a, **kw):
-        kw.setdefault("verify", False)
-        _orig_async(self, *a, **kw)
-    httpx.AsyncClient.__init__ = _patched_async  # type: ignore[method-assign]
+    os.environ["HTTPX_VERIFY"] = "0"  # httpx reads this at client creation time
 
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -41,12 +31,16 @@ from python_pipeline import dataset_loader, chunker, embedder
 from python_pipeline.vector_store import VectorStore
 from python_pipeline.retriever import Retriever
 from python_pipeline import llm_client
+from python_pipeline import llm_client_llama_cpp
 from python_pipeline.metrics_collector import (
     QueryMetrics,
     PipelineMetrics,
     compute_percentiles,
     serialize_to_jsonl,
+    compute_stress_summary,
+    append_stress_summary_to_jsonl,
 )
+from python_pipeline.stress_runner import StressRunner
 
 
 def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
@@ -54,6 +48,29 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
 
     # 1. Load config
     cfg = config_module.load_config(config_path)
+
+    # Select LLM backend — llm_rs is Rust-only; exit cleanly after validation.
+    if cfg.llm_backend == "llm_rs":
+        print("Python pipeline skipped: llm_rs backend is Rust-only")
+        sys.exit(0)
+
+    # Build a unified llm_generate_fn based on the selected backend.
+    if cfg.llm_backend == "llama_cpp":
+        def llm_generate_fn(query: str, chunks: list) -> object:
+            return llm_client_llama_cpp.generate(
+                query=query,
+                chunks=chunks,
+                gguf_model_path=cfg.gguf_model_path,
+            )
+    else:
+        # Default: ollama_http
+        def llm_generate_fn(query: str, chunks: list) -> object:
+            return llm_client.generate(
+                query=query,
+                chunks=chunks,
+                llm_host=cfg.llm_host,
+                model=cfg.llm_model,
+            )
 
     # Ensure output directory exists
     output_dir = Path(cfg.output_dir)
@@ -114,11 +131,9 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
             retrieval_ms = (time.perf_counter() - retrieval_start) * 1000.0
 
             # b. Generate answer — record ttft_ms, generation_ms, total_tokens
-            response = llm_client.generate(
+            response = llm_generate_fn(
                 query=question,
                 chunks=retrieved_chunks,
-                llm_host=cfg.llm_host,
-                model=cfg.llm_model,
             )
 
             # c. Record end-to-end latency
@@ -166,7 +181,7 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
     successful_latencies = [q.end_to_end_ms for q in query_metrics_list if not q.failed]
     p50, p95 = compute_percentiles(successful_latencies)
 
-    # 9. Create PipelineMetrics and serialize to {output_dir}/metrics_python.jsonl
+    # 9. Create PipelineMetrics and serialize to {output_dir}/metrics_python_{llm_backend}.jsonl
     pipeline_metrics = PipelineMetrics(
         embedding_phase_ms=embedding_phase_ms,
         index_build_ms=index_build_ms,
@@ -175,10 +190,51 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
         p95_latency_ms=p95,
     )
 
-    output_path = output_dir / "metrics_python.jsonl"
+    llm_backend = cfg.llm_backend
+    output_path = output_dir / f"metrics_python_{llm_backend}.jsonl"
     serialize_to_jsonl(pipeline_metrics, str(output_path))
     print(f"Metrics written to {output_path}")
     print(f"p50={p50:.1f} ms  p95={p95:.1f} ms  failures={sum(1 for q in query_metrics_list if q.failed)}/{total_queries}")
+
+    # 10. Run stress test phase if enabled
+    if cfg.stress_test.enabled:
+        print("\nStarting stress test phase...")
+        # Reload documents using stress_test.num_documents
+        stress_docs = dataset_loader.load_documents(
+            cfg.dataset_name, cfg.dataset_subset, cfg.stress_test.num_documents
+        )
+        stress_chunks = chunker.chunk_documents(
+            stress_docs, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap
+        )
+        stress_embeddings = embedder.embed_chunks(stress_chunks)
+        stress_vs = VectorStore(dim=384, space="cosine")
+        stress_vs.build_index(stress_embeddings)
+
+        query_strings = [entry["question"] for entry in queries]
+
+        runner = StressRunner(
+            chunks=stress_chunks,
+            vector_store=stress_vs,
+            llm_generate_fn=llm_generate_fn,
+            query_set=query_strings,
+            concurrency=cfg.stress_test.concurrency,
+            query_repetitions=cfg.stress_test.query_repetitions,
+        )
+        stress_results = runner.run()
+        print(f"Stress test complete: {len(stress_results)} queries dispatched.")
+
+        # Compute and append stress summary to the JSONL file
+        stress_summary = compute_stress_summary(
+            query_metrics=stress_results,
+            concurrency=cfg.stress_test.concurrency,
+            total_wall_clock_s=runner.last_wall_clock_s,
+        )
+        append_stress_summary_to_jsonl(stress_summary, str(output_path))
+        print(
+            f"Stress summary: {stress_summary.queries_per_second:.2f} QPS  "
+            f"peak_rss={stress_summary.peak_rss_mb:.1f} MB  "
+            f"p99={stress_summary.p99_latency_ms:.1f} ms"
+        )
 
 
 if __name__ == "__main__":

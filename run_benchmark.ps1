@@ -12,34 +12,20 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
 # ---------------------------------------------------------------------------
-# 0. Start embedding server (used by Rust pipeline)
+# 0. Read llm_backend and output_dir from benchmark_config.toml
 # ---------------------------------------------------------------------------
-Write-Host "==> Starting embedding server..." -ForegroundColor Cyan
-$embedJob = Start-Job -ScriptBlock {
-    param($dir)
-    Set-Location $dir
-    $env:DISABLE_SSL_VERIFY = $using:env:DISABLE_SSL_VERIFY
-    uv run python embedding_server.py 2>&1
-} -ArgumentList $ScriptDir
+$configContent = Get-Content "benchmark_config.toml" -Raw
+$llmBackendMatch = [regex]::Match($configContent, 'llm_backend\s*=\s*"([^"]+)"')
+$LlmBackend = if ($llmBackendMatch.Success) { $llmBackendMatch.Groups[1].Value } else { "ollama_http" }
 
-# Wait until the server is ready
-$ready = $false
-for ($i = 0; $i -lt 30; $i++) {
-    Start-Sleep -Seconds 2
-    try {
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:8765/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-        if ($r.StatusCode -eq 200) { $ready = $true; break }
-    } catch {}
-}
-if (-not $ready) {
-    Write-Host "ERROR: Embedding server did not start in time." -ForegroundColor Red
-    Stop-Job $embedJob; Remove-Job $embedJob
-    exit 1
-}
-Write-Host "Embedding server ready." -ForegroundColor Green
+$outputDirMatch = [regex]::Match($configContent, 'output_dir\s*=\s*"([^"]+)"')
+$OutputDir = if ($outputDirMatch.Success) { $outputDirMatch.Groups[1].Value } else { "output/" }
+$OutputDir = $OutputDir.TrimEnd('/')
+
+Write-Host "==> LLM backend: $LlmBackend" -ForegroundColor Cyan
 
 # ---------------------------------------------------------------------------
-# 1. Run Python pipeline
+# 1. Run Python pipeline (skipped automatically when llm_backend = "llm_rs")
 # ---------------------------------------------------------------------------
 Write-Host "==> Running Python pipeline..." -ForegroundColor Cyan
 uv run python -m python_pipeline.pipeline
@@ -77,14 +63,11 @@ if (-not (Test-Path $rustBinary)) {
 # 5. Generate report
 # ---------------------------------------------------------------------------
 Write-Host "==> Generating report..." -ForegroundColor Cyan
-uv run python report\generate_report.py
+uv run python report\generate_report.py `
+    --python-jsonl "$OutputDir\metrics_python_$LlmBackend.jsonl" `
+    --rust-jsonl   "$OutputDir\metrics_rust_$LlmBackend.jsonl" `
+    --output       "$OutputDir\benchmark_report_$LlmBackend.md" `
+    --llm-backend  "$LlmBackend"
 
 Write-Host ""
-Write-Host "Benchmark complete. See benchmark_report.md for results." -ForegroundColor Green
-
-# ---------------------------------------------------------------------------
-# Cleanup: stop embedding server
-# ---------------------------------------------------------------------------
-Write-Host "==> Stopping embedding server..." -ForegroundColor DarkGray
-Stop-Job $embedJob -ErrorAction SilentlyContinue
-Remove-Job $embedJob -ErrorAction SilentlyContinue
+Write-Host "Benchmark complete. See $OutputDir\benchmark_report_$LlmBackend.md for results." -ForegroundColor Green

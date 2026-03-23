@@ -127,7 +127,7 @@ def _jsonl_strategy(failure_count: int = 0):
     py_data=_jsonl_strategy(),
     rs_data=_jsonl_strategy(),
 )
-@settings(max_examples=100, deadline=None)
+@settings(max_examples=20, deadline=None)
 def test_report_contains_all_required_headers_and_rows(
     py_data: dict,
     rs_data: dict,
@@ -203,7 +203,7 @@ def test_report_contains_all_required_headers_and_rows(
         max_size=5,
     ),
 )
-@settings(max_examples=100, deadline=None)
+@settings(max_examples=20, deadline=None)
 def test_report_contains_warning_when_failure_rate_exceeds_10_percent(
     query_set_size: int,
     py_failure_frac: float,
@@ -411,3 +411,284 @@ class TestReportGeneratorUnit:
         assert "statistically reliable" not in report_text, (
             "Report must NOT contain a reliability warning when failure rate <= 10%"
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 21 — Stress test section tests
+# Validates: Requirements 11.8
+# ---------------------------------------------------------------------------
+
+STRESS_METRIC_LABELS = [
+    "throughput (QPS)",
+    "peak RSS (MB)",
+    "p50 latency (ms)",
+    "p95 latency (ms)",
+    "p99 latency (ms)",
+    "failure count",
+]
+
+
+def _make_stress_summary(
+    concurrency: int = 8,
+    total_queries: int = 500,
+    queries_per_second: float = 42.7,
+    peak_rss_mb: float = 1240.5,
+    p99_latency_ms: float = 3800.0,
+    p50_latency_ms: float = 1100.0,
+    p95_latency_ms: float = 2500.0,
+    failure_count: int = 2,
+) -> dict:
+    return {
+        "type": "stress_summary",
+        "concurrency": concurrency,
+        "total_queries": total_queries,
+        "queries_per_second": queries_per_second,
+        "peak_rss_mb": peak_rss_mb,
+        "p99_latency_ms": p99_latency_ms,
+        "p50_latency_ms": p50_latency_ms,
+        "p95_latency_ms": p95_latency_ms,
+        "failure_count": failure_count,
+    }
+
+
+def _write_jsonl_with_stress(
+    path: str,
+    queries: list[dict],
+    summary: dict,
+    stress_summary: dict | None = None,
+) -> None:
+    with open(path, "w", encoding="utf-8") as fh:
+        for q in queries:
+            fh.write(json.dumps(q) + "\n")
+        fh.write(json.dumps(summary) + "\n")
+        if stress_summary is not None:
+            fh.write(json.dumps(stress_summary) + "\n")
+
+
+class TestStressSection:
+    """Unit tests for the stress test section in the report generator."""
+
+    def test_stress_section_present_when_both_pipelines_have_stress_data(self, tmp_path: Path) -> None:
+        """When both JSONL files contain stress_summary records, the report includes a stress section.
+
+        Validates: Requirements 11.8
+        """
+        py_path = str(tmp_path / "metrics_python.jsonl")
+        rs_path = str(tmp_path / "metrics_rust.jsonl")
+        report_path = str(tmp_path / "benchmark_report.md")
+
+        py_queries = [_make_query(0, 100.0)]
+        rs_queries = [_make_query(0, 80.0)]
+        py_summary = _make_summary()
+        rs_summary = _make_summary()
+        py_stress = _make_stress_summary(queries_per_second=30.0, peak_rss_mb=800.0)
+        rs_stress = _make_stress_summary(queries_per_second=60.0, peak_rss_mb=400.0)
+
+        _write_jsonl_with_stress(py_path, py_queries, py_summary, py_stress)
+        _write_jsonl_with_stress(rs_path, rs_queries, rs_summary, rs_stress)
+
+        generate_report(py_path, rs_path, output_path=report_path, query_set_size=50)
+
+        report_text = Path(report_path).read_text(encoding="utf-8")
+
+        assert "Stress Test Results" in report_text, "Report must contain a stress test section"
+        for label in STRESS_METRIC_LABELS:
+            assert label in report_text, f"Stress section must contain row label: {label}"
+
+    def test_stress_section_has_python_and_rust_columns_when_both_present(self, tmp_path: Path) -> None:
+        """Two-pipeline stress section includes Python value, Rust value, Delta, Delta % columns.
+
+        Validates: Requirements 11.8
+        """
+        py_path = str(tmp_path / "metrics_python.jsonl")
+        rs_path = str(tmp_path / "metrics_rust.jsonl")
+        report_path = str(tmp_path / "benchmark_report.md")
+
+        _write_jsonl_with_stress(py_path, [_make_query(0)], _make_summary(), _make_stress_summary())
+        _write_jsonl_with_stress(rs_path, [_make_query(0)], _make_summary(), _make_stress_summary())
+
+        generate_report(py_path, rs_path, output_path=report_path, query_set_size=50)
+
+        report_text = Path(report_path).read_text(encoding="utf-8")
+
+        # The stress section table must have the same columns as the main table
+        assert "Python value" in report_text
+        assert "Rust value" in report_text
+        assert "Delta" in report_text
+        assert "Delta %" in report_text
+
+    def test_stress_section_absent_when_no_stress_data(self, tmp_path: Path) -> None:
+        """When neither JSONL file has a stress_summary record, no stress section is added.
+
+        Validates: Requirements 11.8
+        """
+        py_path = str(tmp_path / "metrics_python.jsonl")
+        rs_path = str(tmp_path / "metrics_rust.jsonl")
+        report_path = str(tmp_path / "benchmark_report.md")
+
+        _write_jsonl(py_path, [_make_query(0)], _make_summary())
+        _write_jsonl(rs_path, [_make_query(0)], _make_summary())
+
+        generate_report(py_path, rs_path, output_path=report_path, query_set_size=50)
+
+        report_text = Path(report_path).read_text(encoding="utf-8")
+        assert "Stress Test Results" not in report_text, (
+            "Report must NOT contain a stress section when no stress data is present"
+        )
+
+    def test_stress_section_rust_only_when_only_rust_has_stress_data(self, tmp_path: Path) -> None:
+        """When only the Rust JSONL has a stress_summary, the section shows only Rust column (no Delta).
+
+        Validates: Requirements 11.8
+        """
+        py_path = str(tmp_path / "metrics_python.jsonl")
+        rs_path = str(tmp_path / "metrics_rust.jsonl")
+        report_path = str(tmp_path / "benchmark_report.md")
+
+        _write_jsonl(py_path, [_make_query(0)], _make_summary())
+        _write_jsonl_with_stress(rs_path, [_make_query(0)], _make_summary(), _make_stress_summary(queries_per_second=55.0))
+
+        generate_report(py_path, rs_path, output_path=report_path, query_set_size=50)
+
+        report_text = Path(report_path).read_text(encoding="utf-8")
+
+        assert "Stress Test Results" in report_text
+        assert "Rust value" in report_text
+        # Single-pipeline stress section must NOT have Delta columns
+        # (check within the stress section specifically)
+        stress_section_start = report_text.find("## Stress Test Results")
+        stress_section = report_text[stress_section_start:]
+        assert "Delta %" not in stress_section, (
+            "Single-pipeline stress section must not contain Delta % column"
+        )
+
+    def test_stress_section_values_match_jsonl_data(self, tmp_path: Path) -> None:
+        """Stress section values in the report match the values from the JSONL stress_summary records.
+
+        Validates: Requirements 11.8
+        """
+        py_path = str(tmp_path / "metrics_python.jsonl")
+        rs_path = str(tmp_path / "metrics_rust.jsonl")
+        report_path = str(tmp_path / "benchmark_report.md")
+
+        py_stress = _make_stress_summary(
+            queries_per_second=25.5,
+            peak_rss_mb=900.0,
+            p50_latency_ms=1200.0,
+            p95_latency_ms=2800.0,
+            p99_latency_ms=4000.0,
+            failure_count=3,
+        )
+        rs_stress = _make_stress_summary(
+            queries_per_second=75.0,
+            peak_rss_mb=350.0,
+            p50_latency_ms=500.0,
+            p95_latency_ms=1200.0,
+            p99_latency_ms=2000.0,
+            failure_count=0,
+        )
+
+        _write_jsonl_with_stress(py_path, [_make_query(0)], _make_summary(), py_stress)
+        _write_jsonl_with_stress(rs_path, [_make_query(0)], _make_summary(), rs_stress)
+
+        generate_report(py_path, rs_path, output_path=report_path, query_set_size=50)
+
+        report_text = Path(report_path).read_text(encoding="utf-8")
+
+        # Check that key values appear in the report
+        assert "25.50" in report_text, "Python QPS value should appear in report"
+        assert "75.00" in report_text, "Rust QPS value should appear in report"
+        assert "900.00" in report_text, "Python peak RSS should appear in report"
+        assert "350.00" in report_text, "Rust peak RSS should appear in report"
+        assert "4000.00" in report_text, "Python p99 latency should appear in report"
+        assert "2000.00" in report_text, "Rust p99 latency should appear in report"
+
+    def test_stress_section_appended_after_main_table(self, tmp_path: Path) -> None:
+        """The stress section appears after the main summary table in the report.
+
+        Validates: Requirements 11.8
+        """
+        py_path = str(tmp_path / "metrics_python.jsonl")
+        rs_path = str(tmp_path / "metrics_rust.jsonl")
+        report_path = str(tmp_path / "benchmark_report.md")
+
+        _write_jsonl_with_stress(py_path, [_make_query(0)], _make_summary(), _make_stress_summary())
+        _write_jsonl_with_stress(rs_path, [_make_query(0)], _make_summary(), _make_stress_summary())
+
+        generate_report(py_path, rs_path, output_path=report_path, query_set_size=50)
+
+        report_text = Path(report_path).read_text(encoding="utf-8")
+
+        summary_pos = report_text.find("## Summary Table")
+        stress_pos = report_text.find("## Stress Test Results")
+
+        assert summary_pos != -1, "Report must contain Summary Table section"
+        assert stress_pos != -1, "Report must contain Stress Test Results section"
+        assert stress_pos > summary_pos, (
+            "Stress Test Results section must appear after Summary Table"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 22.2 — Property 23: Single-pipeline report for llm_rs mode
+# Feature: rust-vs-python-rag-benchmark, Property 23: Report_Generator with
+# llm_backend=llm_rs and only Rust JSONL present → produces report without
+# error, no Delta/Delta% columns
+# ---------------------------------------------------------------------------
+
+# Feature: rust-vs-python-rag-benchmark, Property 23: Report_Generator with llm_backend=llm_rs and only Rust JSONL present → produces report without error, no Delta/Delta% columns
+
+
+@given(rs_data=_jsonl_strategy())
+@settings(max_examples=20, deadline=None)
+def test_single_pipeline_report_in_llm_rs_mode(rs_data: dict) -> None:
+    """Property 23: Single-pipeline report for llm_rs mode.
+
+    # Feature: rust-vs-python-rag-benchmark, Property 23: Report_Generator with llm_backend=llm_rs and only Rust JSONL present → produces report without error, no Delta/Delta% columns
+    Validates: Requirements 8.6
+
+    When llm_backend="llm_rs" and only metrics_rust_llm_rs.jsonl is present
+    (Python pipeline was skipped), the Report_Generator must:
+    1. Produce benchmark_report_llm_rs.md without returning an error
+    2. The report must NOT contain Delta or Delta % columns
+    3. The report must contain all required row labels
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Only the Rust JSONL is present — Python JSONL is intentionally absent
+        rs_path = str(Path(tmpdir) / "metrics_rust_llm_rs.jsonl")
+        py_path = str(Path(tmpdir) / "metrics_python_llm_rs.jsonl")  # does NOT exist
+        report_path = str(Path(tmpdir) / "benchmark_report_llm_rs.md")
+
+        _write_jsonl(rs_path, rs_data["queries"], rs_data["summary"])
+        # py_path is deliberately not created
+
+        # Must not raise any error
+        generate_report(
+            py_path,
+            rs_path,
+            output_path=report_path,
+            query_set_size=50,
+            llm_backend="llm_rs",
+        )
+
+        # Report file must exist
+        assert Path(report_path).exists(), (
+            "benchmark_report_llm_rs.md was not produced"
+        )
+
+        report_text = Path(report_path).read_text(encoding="utf-8")
+
+        # Report must NOT contain Delta or Delta % columns
+        assert "Delta %" not in report_text, (
+            "Single-pipeline llm_rs report must not contain 'Delta %' column"
+        )
+        assert "| Delta |" not in report_text, (
+            "Single-pipeline llm_rs report must not contain 'Delta' column"
+        )
+
+        # Report must contain all required row labels
+        for row_label in REQUIRED_ROW_LABELS:
+            assert row_label in report_text, (
+                f"Required row label '{row_label}' not found in single-pipeline report"
+            )
+

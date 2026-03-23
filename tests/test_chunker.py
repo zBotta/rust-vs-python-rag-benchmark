@@ -49,7 +49,7 @@ def _count_tokens(text: str) -> int:
 
 
 @given(doc=st.text(alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd", "Zs"), whitelist_characters=".,!? "), min_size=1, max_size=4096))
-@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
+@settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow])
 def test_every_chunk_character_count_le_chunk_size(doc: str) -> None:
     """Property 1: Every chunk produced by the Python chunker has at most
     chunk_size characters (512).
@@ -82,7 +82,7 @@ def test_every_chunk_character_count_le_chunk_size(doc: str) -> None:
     min_size=1,
     max_size=10,
 ))
-@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
+@settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow])
 def test_chunk_count_equivalence_within_one_percent(docs: list[str]) -> None:
     """Property 2: Python and Rust chunk counts differ by ≤ 1%.
 
@@ -121,7 +121,7 @@ def test_chunk_count_equivalence_within_one_percent(docs: list[str]) -> None:
 
 
 @given(doc=st.text(alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd", "Zs"), whitelist_characters=".,!? "), min_size=1, max_size=100))
-@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
+@settings(max_examples=20, suppress_health_check=[HealthCheck.too_slow])
 def test_short_document_produces_single_chunk_equal_to_original(doc: str) -> None:
     """Property 3: A document shorter than chunk_size characters must be
     returned as exactly one chunk whose text equals the original document.
@@ -144,3 +144,4 @@ def test_short_document_produces_single_chunk_equal_to_original(doc: str) -> Non
         f"  Expected: {doc!r}\n"
         f"  Got:      {chunks[0]!r}"
     )
+

@@ -1,21 +1,35 @@
 # Python dependencies for the RAG benchmark
 # Pinned exact versions for reproducibility (Requirement 10.4)
+# Source of truth is uv.lock — this file is a human-readable snapshot.
+# To update: uv add <package> && uv sync, then refresh this file.
 
 # Core pipeline
-datasets==2.19.1
-sentence-transformers==2.7.0
-langchain-text-splitters==0.2.0
+datasets==4.8.3
+langchain-text-splitters==1.1.1
 hnswlib==0.8.0
-httpx==0.27.0
+httpx==0.28.1
+
+# Embeddings — raw transformers + manual mean pooling (mirrors Rust candle BertModel pipeline)
+# Note: onnxruntime removed — incompatible with Python 3.14 (no wheels available).
+# Both Python and Rust use the same sentence-transformers/all-MiniLM-L6-v2 safetensors weights
+# from the local HF hub cache; no HTTP embedding server is used.
+torch>=2.0.0
+transformers>=4.30.0
+
+# In-process LLM inference (llama_cpp backend)
+llama-cpp-python==0.3.16
+
+# Stress test memory metrics
+psutil==7.2.2
 
 # Report generation
-matplotlib==3.9.0
-numpy==1.26.4
+matplotlib==3.10.8
+numpy==2.4.3
 
 # Testing
-pytest==8.2.0
-hypothesis==6.100.1
-respx==0.21.1
+pytest==9.0.2
+hypothesis==6.151.9
+respx==0.22.0
 
 # Utilities
-tomli==2.0.1
+tomli==2.4.0

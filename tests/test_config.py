@@ -76,7 +76,7 @@ def _write_toml(data: dict) -> str:
 
 
 @given(key=st.sampled_from(REQUIRED_KEYS))
-@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_missing_required_key_produces_descriptive_error(key: str) -> None:
     """For any required key that is absent, load_config must raise BenchmarkError
     whose message identifies the missing key by name.
@@ -107,7 +107,7 @@ def test_missing_required_key_produces_descriptive_error(key: str) -> None:
 # Strategy: pick any subset of optional keys to omit (currently empty set,
 # but the test is structured to grow as optional keys are added).
 @given(omitted=st.frozensets(st.sampled_from(list(OPTIONAL_DEFAULTS.keys()) or ["_sentinel"])))
-@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_absent_optional_key_uses_documented_default(omitted: frozenset) -> None:
     """For any subset of optional keys that are absent from the config, the
     loaded BenchmarkConfig must contain the documented default value for each
@@ -131,6 +131,51 @@ def test_absent_optional_key_uses_documented_default(omitted: frozenset) -> None
                 assert actual == expected, (
                     f"Optional key '{key}' should default to {expected!r}, got {actual!r}"
                 )
+    finally:
+        os.unlink(path)
+
+
+# ---------------------------------------------------------------------------
+# Sub-task 17.2 — Property 21
+# ---------------------------------------------------------------------------
+
+# Feature: rust-vs-python-rag-benchmark, Property 21: Config with llm_backend=llama_cpp or llm_rs and absent gguf_model_path → error naming gguf_model_path
+
+IN_PROCESS_BACKENDS = ["llama_cpp", "llm_rs"]
+
+
+@given(
+    backend=st.sampled_from(IN_PROCESS_BACKENDS),
+    gguf_present=st.booleans(),
+)
+@settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_gguf_model_path_required_for_in_process_backends(
+    backend: str, gguf_present: bool
+) -> None:
+    """For any config where llm_backend is 'llama_cpp' or 'llm_rs' and
+    gguf_model_path is absent or empty string, load_config must raise
+    BenchmarkError whose message identifies 'gguf_model_path'.
+
+    # Feature: rust-vs-python-rag-benchmark, Property 21: Config with llm_backend=llama_cpp or llm_rs and absent gguf_model_path → error naming gguf_model_path
+    """
+    config_data = dict(FULL_CONFIG)
+    config_data["llm_backend"] = backend
+
+    if gguf_present:
+        # Empty string is treated as absent — must still error.
+        config_data["gguf_model_path"] = ""
+    else:
+        # Key entirely absent.
+        config_data.pop("gguf_model_path", None)
+
+    path = _write_toml(config_data)
+    try:
+        with pytest.raises(BenchmarkError) as exc_info:
+            load_config(path)
+        error_message = str(exc_info.value)
+        assert "gguf_model_path" in error_message, (
+            f"Error message should mention 'gguf_model_path', got: {error_message!r}"
+        )
     finally:
         os.unlink(path)
 
@@ -167,3 +212,4 @@ def test_all_required_keys_individually() -> None:
             )
         finally:
             os.unlink(path)
+

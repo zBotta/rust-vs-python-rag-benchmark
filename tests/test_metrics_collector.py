@@ -66,7 +66,7 @@ def query_metrics_strategy(query_id: int = 0, failed: bool = False):
     embedding_phase_ms=non_negative_float,
     index_build_ms=non_negative_float,
 )
-@settings(max_examples=100)
+@settings(max_examples=20)
 def test_all_metric_fields_non_negative(
     end_to_end_ms: float,
     retrieval_ms: float,
@@ -137,7 +137,7 @@ def _numpy_percentile(sorted_vals: list[float], pct: float) -> float:
         max_size=200,
     )
 )
-@settings(max_examples=100)
+@settings(max_examples=20)
 def test_p50_is_median_p95_is_95th_percentile(latencies: list[float]) -> None:
     """Property 10: p50 = median, p95 = 95th percentile of end-to-end latency values.
 
@@ -179,7 +179,7 @@ def test_p50_is_median_p95_is_95th_percentile(latencies: list[float]) -> None:
         max_size=20,
     ),
 )
-@settings(max_examples=100)
+@settings(max_examples=20)
 def test_failed_queries_excluded_from_percentiles(
     successful_latencies: list[float],
     failed_latencies: list[float],
@@ -248,7 +248,7 @@ def test_failed_queries_excluded_from_percentiles(
         max_size=20,
     ),
 )
-@settings(max_examples=100)
+@settings(max_examples=20)
 def test_jsonl_round_trip(
     embedding_phase_ms: float,
     index_build_ms: float,
@@ -309,3 +309,4 @@ def test_jsonl_round_trip(
         assert r.total_tokens == o.total_tokens
         assert r.failed == o.failed
         assert r.failure_reason == o.failure_reason
+

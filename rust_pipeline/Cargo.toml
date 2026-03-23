@@ -18,11 +18,26 @@ arrow = { version = "53", default-features = false, features = ["ipc"] }
 bytes = "1"
 text-splitter = { version = "0.29", features = ["tokenizers"] }
 tokenizers = { version = "0.22", default-features = false, features = ["http"] }
-fastembed = { version = "4", optional = true }
+# ort removed — embedder uses candle BertModel (pure Rust, no ORT DLL needed)
 instant-distance = "0.6"
 reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
-ureq = { version = "2", default-features = false }
+candle-core = { version = "0.8", features = [] }
+candle-transformers = { version = "0.8" }
+candle-nn = { version = "0.8" }
+# llama_cpp = "0.3"  — DISABLED: requires libclang (LLVM).
+# To enable: winget install --id LLVM.LLVM -e, restart shell, then
+# uncomment and rebuild with: cargo build --release --features llama_cpp_backend
+# llama_cpp = { version = "0.3", optional = true }
+rayon = "1"
+sysinfo = "0.31"
+dirs-next = "2"
 
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"
+
+[features]
+# Enable the llama_cpp in-process backend (requires libclang / LLVM installed).
+# Install: winget install --id LLVM.LLVM -e
+# Then rebuild: cargo build --release --features llama_cpp_backend
+llama_cpp_backend = []

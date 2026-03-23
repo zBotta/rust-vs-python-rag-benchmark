@@ -71,6 +71,17 @@ enum JsonlRecord {
         p95_latency_ms: f64,
         failure_count: u64,
     },
+    #[serde(rename = "stress_summary")]
+    StressSummary {
+        concurrency: usize,
+        total_queries: usize,
+        queries_per_second: f64,
+        peak_rss_mb: f64,
+        p99_latency_ms: f64,
+        p50_latency_ms: f64,
+        p95_latency_ms: f64,
+        failure_count: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +123,150 @@ fn percentile_linear(sorted: &[f64], pct: f64) -> f64 {
     }
 
     sorted[lo] + frac * (sorted[hi] - sorted[lo])
+}
+
+// ---------------------------------------------------------------------------
+// Stress test metrics — Task 19
+// ---------------------------------------------------------------------------
+
+/// Stress test summary metrics.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StressSummary {
+    pub concurrency: usize,
+    pub total_queries: usize,
+    pub queries_per_second: f64,
+    pub peak_rss_mb: f64,
+    pub p99_latency_ms: f64,
+    pub p50_latency_ms: f64,
+    pub p95_latency_ms: f64,
+    pub failure_count: usize,
+}
+
+/// Compute the 99th percentile for a slice of latency values.
+///
+/// Returns 0.0 for an empty slice.
+pub fn compute_p99(latencies: &[f64]) -> f64 {
+    if latencies.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = latencies.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    percentile_linear(&sorted, 99.0)
+}
+
+/// Compute stress test summary metrics from a slice of QueryMetrics.
+///
+/// `queries_per_second = len(query_metrics) / total_wall_clock_s`.
+/// p50/p95/p99 are computed from successful query latencies only.
+/// `peak_rss_mb` is read from the current process via the `sysinfo` crate.
+pub fn compute_stress_summary(
+    query_metrics: &[QueryMetrics],
+    concurrency: usize,
+    total_wall_clock_s: f64,
+) -> StressSummary {
+    let queries_per_second = if total_wall_clock_s > 0.0 {
+        query_metrics.len() as f64 / total_wall_clock_s
+    } else {
+        0.0
+    };
+
+    // Peak RSS via sysinfo (memory() returns bytes in sysinfo 0.31)
+    let rss_mb = {
+        use sysinfo::System;
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        sysinfo::get_current_pid()
+            .ok()
+            .and_then(|pid| sys.process(pid).map(|p| p.memory() as f64 / (1024.0 * 1024.0)))
+            .unwrap_or(0.0)
+    };
+
+    let successful_latencies: Vec<f64> = query_metrics
+        .iter()
+        .filter(|q| !q.failed)
+        .map(|q| q.end_to_end_ms)
+        .collect();
+
+    let (p50, p95) = compute_percentiles(&successful_latencies);
+    let p99 = compute_p99(&successful_latencies);
+    let failure_count = query_metrics.iter().filter(|q| q.failed).count();
+
+    StressSummary {
+        concurrency,
+        total_queries: query_metrics.len(),
+        queries_per_second,
+        peak_rss_mb: rss_mb,
+        p99_latency_ms: p99,
+        p50_latency_ms: p50,
+        p95_latency_ms: p95,
+        failure_count,
+    }
+}
+
+/// Append a stress_summary JSON record to an existing JSONL file.
+pub fn append_stress_summary_to_jsonl(
+    summary: &StressSummary,
+    output_path: &Path,
+) -> Result<(), MetricsError> {
+    let file = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(output_path)?;
+    let mut writer = std::io::BufWriter::new(file);
+
+    let record = JsonlRecord::StressSummary {
+        concurrency: summary.concurrency,
+        total_queries: summary.total_queries,
+        queries_per_second: summary.queries_per_second,
+        peak_rss_mb: summary.peak_rss_mb,
+        p99_latency_ms: summary.p99_latency_ms,
+        p50_latency_ms: summary.p50_latency_ms,
+        p95_latency_ms: summary.p95_latency_ms,
+        failure_count: summary.failure_count,
+    };
+    let line = serde_json::to_string(&record)?;
+    writeln!(writer, "{}", line)?;
+    Ok(())
+}
+
+/// Read a JSONL file and return the stress_summary record if present, or None.
+pub fn read_stress_summary_from_jsonl(
+    input_path: &Path,
+) -> Result<Option<StressSummary>, MetricsError> {
+    let file = std::fs::File::open(input_path)?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines() {
+        let line = line?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let record: JsonlRecord = serde_json::from_str(line)?;
+        if let JsonlRecord::StressSummary {
+            concurrency,
+            total_queries,
+            queries_per_second,
+            peak_rss_mb,
+            p99_latency_ms,
+            p50_latency_ms,
+            p95_latency_ms,
+            failure_count,
+        } = record
+        {
+            return Ok(Some(StressSummary {
+                concurrency,
+                total_queries,
+                queries_per_second,
+                peak_rss_mb,
+                p99_latency_ms,
+                p50_latency_ms,
+                p95_latency_ms,
+                failure_count,
+            }));
+        }
+    }
+    Ok(None)
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +373,9 @@ pub fn deserialize_from_jsonl(input_path: &Path) -> Result<PipelineMetrics, Metr
                 failure_count: _,
             } => {
                 summary_opt = Some((embedding_phase_ms, index_build_ms, p50_latency_ms, p95_latency_ms));
+            }
+            JsonlRecord::StressSummary { .. } => {
+                // stress_summary records are handled by read_stress_summary_from_jsonl; skip here
             }
         }
     }

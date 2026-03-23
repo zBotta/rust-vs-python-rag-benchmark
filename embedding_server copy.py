@@ -61,7 +61,14 @@ def get_model() -> SentenceTransformer:
     global _model
     if _model is None:
         print(f"Loading model {_MODEL_NAME} ...", flush=True)
-        _model = SentenceTransformer(_MODEL_NAME)
+        # Use local_files_only when the model is already cached to avoid
+        # network calls (and SSL issues behind corporate proxies).
+        _hf_cache = os.path.join(
+            os.path.expanduser("~"), ".cache", "huggingface", "hub",
+            "models--" + _MODEL_NAME.replace("/", "--"),
+        )
+        _local_only = os.path.isdir(_hf_cache) or os.environ.get("HF_HUB_OFFLINE", "") == "1"
+        _model = SentenceTransformer(_MODEL_NAME, local_files_only=_local_only)
         print("Model loaded.", flush=True)
     return _model
 

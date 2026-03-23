@@ -13,7 +13,10 @@ mod embedder;
 mod vector_store;
 mod retriever;
 mod llm_client;
+mod llm_client_llm_rs;
+mod llm_client_llama_cpp;
 mod metrics_collector;
+mod stress_runner;
 
 use std::path::Path;
 use std::time::Instant;
@@ -23,6 +26,7 @@ use metrics_collector::{
 };
 use retriever::Retriever;
 use vector_store::VectorStore;
+use llm_client::LlmClient;
 
 fn main() {
     // -----------------------------------------------------------------------
@@ -42,6 +46,34 @@ fn main() {
         eprintln!("Fatal: cannot create output directory '{}': {}", cfg.output_dir, e);
         std::process::exit(1);
     }
+
+    // -----------------------------------------------------------------------
+    // 1b. Select LLM client based on llm_backend
+    // -----------------------------------------------------------------------
+    let llm_client_arc: std::sync::Arc<dyn LlmClient + Send + Sync> = match cfg.llm_backend.as_str() {
+        "llama_cpp" => {
+            match llm_client_llama_cpp::LlamaCppClient::new(&cfg.gguf_model_path) {
+                Ok(c) => std::sync::Arc::new(c),
+                Err(e) => {
+                    eprintln!("Fatal: failed to load llama_cpp model: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "llm_rs" => {
+            match llm_client_llm_rs::LlmRsClient::new(&cfg.gguf_model_path) {
+                Ok(c) => std::sync::Arc::new(c),
+                Err(e) => {
+                    eprintln!("Fatal: failed to load llm_rs model: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        _ => {
+            // Default: ollama_http
+            std::sync::Arc::new(llm_client::OllamaHttpClient::new(&cfg.llm_host, &cfg.llm_model))
+        }
+    };
 
     // -----------------------------------------------------------------------
     // 2. Load documents
@@ -194,7 +226,7 @@ fn main() {
         let retrieval_ms = retrieval_start.elapsed().as_secs_f64() * 1000.0;
 
     // b. Generate answer — record ttft_ms, generation_ms, total_tokens
-        let response = match llm_client::generate(&question, &retrieved_chunks, &cfg.llm_host, &cfg.llm_model, 3) {
+        let response = match llm_client_arc.generate(&question, &retrieved_chunks) {
             Ok(r) => r,
             Err(e) => {
                 let end_to_end_ms = e2e_start.elapsed().as_secs_f64() * 1000.0;
@@ -267,7 +299,7 @@ fn main() {
         p95_latency_ms: p95,
     };
 
-    let output_path = Path::new(&cfg.output_dir).join("metrics_rust.jsonl");
+    let output_path = Path::new(&cfg.output_dir).join(format!("metrics_rust_{}.jsonl", cfg.llm_backend));
     if let Err(e) = serialize_to_jsonl(&pipeline_metrics, &output_path) {
         eprintln!("Fatal: failed to write metrics to '{}': {}", output_path.display(), e);
         std::process::exit(1);
@@ -278,4 +310,73 @@ fn main() {
         "p50={:.1} ms  p95={:.1} ms  failures={}/{}",
         p50, p95, failure_count, total_queries
     );
+
+    // -----------------------------------------------------------------------
+    // 10. Run stress test phase if enabled
+    // -----------------------------------------------------------------------
+    if cfg.stress_test.enabled {
+        println!("\nStarting stress test phase...");
+
+        // Reload documents using stress_test.num_documents
+        let stress_docs = match dataset_loader::load_documents(
+            &cfg.dataset_name,
+            &cfg.dataset_subset,
+            cfg.stress_test.num_documents,
+        ) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Fatal: stress test dataset load failed: {}", e);
+                std::process::exit(1);
+            }
+        };
+        let stress_chunks = chunker::chunk_documents(&stress_docs, cfg.chunk_size, cfg.chunk_overlap);
+        let stress_embeddings = match embedder::embed_chunks(&stress_chunks) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("Fatal: stress test embedding failed: {}", e);
+                std::process::exit(1);
+            }
+        };
+        let mut stress_vs = VectorStore::new(384);
+        if let Err(e) = stress_vs.build_index(&stress_embeddings) {
+            eprintln!("Fatal: stress test index build failed: {}", e);
+            std::process::exit(1);
+        }
+
+        let query_strings: Vec<String> = queries
+            .iter()
+            .filter_map(|e| e["question"].as_str().map(|s| s.to_string()))
+            .collect();
+
+        let stress_runner = stress_runner::StressRunner {
+            chunks: std::sync::Arc::new(stress_chunks),
+            vector_store: std::sync::Arc::new(stress_vs),
+            llm_client: std::sync::Arc::clone(&llm_client_arc),
+            query_set: query_strings,
+            concurrency: cfg.stress_test.concurrency,
+            query_repetitions: cfg.stress_test.query_repetitions,
+        };
+
+        let stress_wall_start = Instant::now();
+        let stress_results = stress_runner.run();
+        let stress_wall_clock_s = stress_wall_start.elapsed().as_secs_f64();
+        println!("Stress test complete: {} queries dispatched.", stress_results.len());
+
+        // Compute and append stress summary to the JSONL file
+        let stress_summary = metrics_collector::compute_stress_summary(
+            &stress_results,
+            cfg.stress_test.concurrency,
+            stress_wall_clock_s,
+        );
+        if let Err(e) = metrics_collector::append_stress_summary_to_jsonl(&stress_summary, &output_path) {
+            eprintln!("Warning: failed to write stress summary: {}", e);
+        } else {
+            println!(
+                "Stress summary: {:.2} QPS  peak_rss={:.1} MB  p99={:.1} ms",
+                stress_summary.queries_per_second,
+                stress_summary.peak_rss_mb,
+                stress_summary.p99_latency_ms,
+            );
+        }
+    }
 }
