@@ -287,12 +287,58 @@ def _analysis_and_conclusions(runs: dict[tuple[str, str], RunMetrics]) -> list[s
 
     lines.extend([
         "",
+        "### llama_cpp Focus (Python vs Rust)",
+        "",
+    ])
+
+    py_llama = runs.get(("python", "llama_cpp"))
+    rs_llama = runs.get(("rust", "llama_cpp"))
+    if py_llama is None or rs_llama is None:
+        missing = []
+        if py_llama is None:
+            missing.append("python/llama_cpp")
+        if rs_llama is None:
+            missing.append("rust/llama_cpp")
+        lines.append(
+            "- Missing llama_cpp comparison inputs: "
+            + ", ".join(missing)
+            + "."
+        )
+    else:
+        p50_delta = rs_llama.p50_latency_ms - py_llama.p50_latency_ms
+        p95_delta = rs_llama.p95_latency_ms - py_llama.p95_latency_ms
+        e2e_delta = rs_llama.mean_end_to_end_ms - py_llama.mean_end_to_end_ms
+        emb_delta = rs_llama.embedding_phase_ms - py_llama.embedding_phase_ms
+        idx_delta = rs_llama.index_build_ms - py_llama.index_build_ms
+
+        lines.append(
+            "- Both llama_cpp runs completed all queries without failures "
+            f"({py_llama.failure_count} vs {rs_llama.failure_count})."
+        )
+        lines.append(
+            f"- Latency delta (Rust - Python): p50={_fmt(p50_delta)} ms, "
+            f"p95={_fmt(p95_delta)} ms, mean_end_to_end={_fmt(e2e_delta)} ms."
+        )
+        lines.append(
+            f"- Build-time stages are significantly higher in Rust for this run: "
+            f"embedding delta={_fmt(emb_delta)} ms, index delta={_fmt(idx_delta)} ms."
+        )
+        lines.append(
+            f"- Mean TTFT differs sharply (Python={_fmt(py_llama.mean_ttft_ms)} ms, "
+            f"Rust={_fmt(rs_llama.mean_ttft_ms)} ms); treat this with caution if token streaming "
+            "instrumentation differs between bindings."
+        )
+
+    lines.extend([
+        "",
         "## Conclusions",
         "",
         "- Use same backend + same query_count + same stress settings for strict apples-to-apples conclusions.",
         "- If query_count or failure_count differs, treat deltas as directional, not definitive.",
         "- In most discovered runs, inference generation time is the primary bottleneck, not retrieval/indexing.",
         "- Prefer backend-specific stress strategies: HTTP backends can share server concurrency; in-process backends should avoid unsafe shared model instances across threads.",
+        "- For this benchmark iteration, Qwen2.5 GGUF is a practical llama_cpp comparison model because it loads and runs in both Python and Rust pipelines.",
+        "- Keep Llama-3.2 GGUF as a compatibility track item; exclude it from strict Python-vs-Rust llama_cpp performance claims until loader compatibility is resolved.",
         "",
     ])
 
