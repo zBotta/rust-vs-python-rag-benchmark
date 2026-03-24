@@ -1,0 +1,6 @@
+{"type": "query", "query_id": 0, "end_to_end_ms": 6940.8305999822915, "retrieval_ms": 15.45010000700131, "ttft_ms": 2499.3900999543257, "generation_ms": 6400.9532000054605, "total_tokens": 0, "failed": false, "failure_reason": null}
+{"type": "query", "query_id": 1, "end_to_end_ms": 5631.4311000169255, "retrieval_ms": 13.467099983245134, "ttft_ms": 1488.5248999926262, "generation_ms": 5617.87810001988, "total_tokens": 0, "failed": false, "failure_reason": null}
+{"type": "query", "query_id": 2, "end_to_end_ms": 5613.397100009024, "retrieval_ms": 17.289999988861382, "ttft_ms": 1452.210900024511, "generation_ms": 5596.033600042574, "total_tokens": 0, "failed": false, "failure_reason": null}
+{"type": "query", "query_id": 3, "end_to_end_ms": 6692.511200031731, "retrieval_ms": 9.737299988046288, "ttft_ms": 2780.7912999996915, "generation_ms": 6682.724300015252, "total_tokens": 0, "failed": false, "failure_reason": null}
+{"type": "query", "query_id": 4, "end_to_end_ms": 7373.331099981442, "retrieval_ms": 10.326399991754442, "ttft_ms": 2122.8385999565944, "generation_ms": 7362.955099961255, "total_tokens": 0, "failed": false, "failure_reason": null}
+{"type": "summary", "embedding_phase_ms": 1357.054500025697, "index_build_ms": 12.972700002137572, "p50_latency_ms": 6692.511200031731, "p95_latency_ms": 7286.830999981612, "failure_count": 0}

@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 
 from python_pipeline import config as config_module
+from python_pipeline.logger import BenchmarkLogger, LogLevel
 from python_pipeline import dataset_loader, chunker, embedder
 from python_pipeline.vector_store import VectorStore
 from python_pipeline.retriever import Retriever
@@ -87,9 +88,33 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
     # 1. Load config
     cfg = config_module.load_config(config_path)
 
+    # Parse log_level from config (task 5.1)
+    _level_map = {
+        "DEBUG": LogLevel.DEBUG,
+        "INFO": LogLevel.INFO,
+        "WARNING": LogLevel.WARNING,
+        "ERROR": LogLevel.ERROR,
+    }
+    raw_level = cfg.log_level.upper()
+    if raw_level not in _level_map:
+        print(
+            f"WARNING: Unrecognised log_level '{cfg.log_level}', falling back to INFO",
+            file=sys.stderr,
+        )
+        min_level = LogLevel.INFO
+    else:
+        min_level = _level_map[raw_level]
+
+    logger = BenchmarkLogger(
+        output_dir=cfg.output_dir,
+        backend=cfg.llm_backend,
+        min_level=min_level,
+    )
+
     # Select LLM backend — llm_rs is Rust-only; exit cleanly after validation.
     if cfg.llm_backend == "llm_rs":
         print("Python pipeline skipped: llm_rs backend is Rust-only")
+        logger.close()
         sys.exit(0)
 
     # Build a unified llm_generate_fn based on the selected backend.
@@ -111,9 +136,17 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
             )
 
     if cfg.llm_backend == "ollama_http":
-        _preflight_ollama(cfg.llm_host, cfg.llm_model)
+        try:
+            _preflight_ollama(cfg.llm_host, cfg.llm_model)
+        except SystemExit:
+            logger.close()
+            raise
     elif cfg.llm_backend == "llama_cpp":
-        _preflight_gguf(cfg.gguf_model_path)
+        try:
+            _preflight_gguf(cfg.gguf_model_path)
+        except SystemExit:
+            logger.close()
+            raise
 
     # Ensure output directory exists
     output_dir = Path(cfg.output_dir)
@@ -121,27 +154,56 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
 
     # 2. Load documents
     print("Loading documents...")
-    docs = dataset_loader.load_documents(cfg.dataset_name, cfg.dataset_subset, cfg.num_documents)
+    logger.log_loading_start(cfg.dataset_name, cfg.dataset_subset, cfg.num_documents)
+    _load_start = time.perf_counter()
+    try:
+        docs = dataset_loader.load_documents(cfg.dataset_name, cfg.dataset_subset, cfg.num_documents)
+    except Exception as exc:
+        logger.log_loading_error(str(exc))
+        raise
+    _load_elapsed_ms = (time.perf_counter() - _load_start) * 1000.0
+    logger.log_loading_complete(len(docs), _load_elapsed_ms)
     print(f"Loaded {len(docs)} documents.")
 
     # 3. Chunk documents
     print("Chunking documents...")
+    logger.log_chunking_start(cfg.chunk_size, cfg.chunk_overlap)
+    _chunk_start = time.perf_counter()
     chunks = chunker.chunk_documents(docs, chunk_size=cfg.chunk_size, overlap=cfg.chunk_overlap)
+    _chunk_elapsed_ms = (time.perf_counter() - _chunk_start) * 1000.0
+    logger.log_chunking_complete(len(chunks), _chunk_elapsed_ms)
+    if len(chunks) == 0 and len(docs) > 0:
+        logger.log_chunking_zero_warning()
     print(f"Produced {len(chunks)} chunks.")
 
     # 4. Embed all chunks — record embedding_phase_ms
     print("Embedding chunks...")
+    logger.log_embedding_start(cfg.embedding_model, len(chunks))
     embed_start = time.perf_counter()
-    embeddings = embedder.embed_chunks(chunks)
+    try:
+        embeddings = embedder.embed_chunks(chunks)
+    except Exception as exc:
+        logger.log_embedding_error(str(exc))
+        raise
     embedding_phase_ms = (time.perf_counter() - embed_start) * 1000.0
+    # Emit progress records (simulated, every 100 chunks) before completion
+    for i in range(100, len(chunks) + 1, 100):
+        logger.log_embedding_progress(i)
+    logger.log_embedding_complete(embedding_phase_ms)
     print(f"Embedding done in {embedding_phase_ms:.1f} ms.")
 
     # 5. Build vector index — record index_build_ms
     print("Building vector index...")
     vs = VectorStore(dim=384, space="cosine")
+    logger.log_index_build_start(len(embeddings))
     index_start = time.perf_counter()
-    vs.build_index(embeddings)
+    try:
+        vs.build_index(embeddings)
+    except Exception as exc:
+        logger.log_index_build_error(str(exc))
+        raise
     index_build_ms = (time.perf_counter() - index_start) * 1000.0
+    logger.log_index_build_complete(index_build_ms)
     print(f"Index built in {index_build_ms:.1f} ms.")
 
     # embedder_fn for Retriever: embed a single query string → list[float]
@@ -169,20 +231,33 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
 
         try:
             # a. Retrieve top-k chunks — record retrieval_ms
+            logger.log_retrieval_start(query_id)
             retrieval_start = time.perf_counter()
-            retrieved_chunks = retriever.retrieve(question, top_k=cfg.top_k)
-            retrieval_ms = (time.perf_counter() - retrieval_start) * 1000.0
+            try:
+                retrieved_chunks = retriever.retrieve(question, top_k=cfg.top_k)
+                retrieval_ms = (time.perf_counter() - retrieval_start) * 1000.0
+                logger.log_retrieval_complete(query_id, len(retrieved_chunks), retrieval_ms)
+            except Exception as exc:
+                retrieval_ms = (time.perf_counter() - retrieval_start) * 1000.0
+                logger.log_retrieval_error(query_id, str(exc))
+                raise
 
             # b. Generate answer — record ttft_ms, generation_ms, total_tokens
-            response = llm_generate_fn(
-                query=question,
-                chunks=retrieved_chunks,
-            )
+            logger.log_generation_start(query_id, len(retrieved_chunks))
+            try:
+                response = llm_generate_fn(
+                    query=question,
+                    chunks=retrieved_chunks,
+                )
+            except Exception as exc:
+                logger.log_generation_error(query_id, str(exc))
+                raise
 
             # c. Record end-to-end latency
             end_to_end_ms = (time.perf_counter() - e2e_start) * 1000.0
 
             if response.failed:
+                logger.log_generation_failed_response(query_id, response.failure_reason)
                 qm = QueryMetrics(
                     query_id=query_id,
                     end_to_end_ms=end_to_end_ms,
@@ -194,6 +269,9 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
                     failure_reason=response.failure_reason,
                 )
             else:
+                logger.log_generation_complete(
+                    query_id, response.total_tokens, response.ttft_ms, response.generation_ms
+                )
                 qm = QueryMetrics(
                     query_id=query_id,
                     end_to_end_ms=end_to_end_ms,
@@ -242,6 +320,9 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
     print(f"Metrics written to {output_path}")
     print(f"p50={p50:.1f} ms  p95={p95:.1f} ms  failures={sum(1 for q in query_metrics_list if q.failed)}/{total_queries}")
 
+    failures = sum(1 for q in query_metrics_list if q.failed)
+    logger.log_run_summary(total_queries, failures, p50, p95, str(output_path))
+
     # 10. Run stress test phase if enabled
     if cfg.stress_test.enabled:
         print("\nStarting stress test phase...")
@@ -280,6 +361,11 @@ def run_pipeline(config_path: str = "benchmark_config.toml") -> None:
             f"Stress summary: {stress_summary.queries_per_second:.2f} QPS  "
             f"peak_rss={stress_summary.peak_rss_mb:.1f} MB  "
             f"p99={stress_summary.p99_latency_ms:.1f} ms"
+        )
+        logger.log_stress_summary(
+            stress_summary.queries_per_second,
+            stress_summary.peak_rss_mb,
+            stress_summary.p99_latency_ms,
         )
 
 

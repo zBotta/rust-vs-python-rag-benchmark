@@ -1,0 +1,37 @@
+{
+  "language": "python",
+  "backend": "llama_cpp",
+  "model": "C:\\Users\\mbottari\\.models\\qwen2.5-0.5b-instruct-q4_k_m.gguf",
+  "n_ctx": 2048,
+  "max_tokens": 128,
+  "warmup": 1,
+  "repeats": 3,
+  "prompt_len": 54,
+  "mean_ttft_ms": 17.004233358117443,
+  "p50_ttft_ms": 16.989100025966763,
+  "p95_ttft_ms": 18.53053002851084,
+  "mean_total_ms": 2080.0169333427525,
+  "p50_total_ms": 2058.9513999875635,
+  "p95_total_ms": 2134.310020011617,
+  "mean_token_chunks": 128,
+  "runs": [
+    {
+      "ttft_ms": 18.701800028793514,
+      "total_ms": 2058.9513999875635,
+      "token_chunks": 128,
+      "text_len": 647
+    },
+    {
+      "ttft_ms": 16.989100025966763,
+      "total_ms": 2038.416200026404,
+      "token_chunks": 128,
+      "text_len": 718
+    },
+    {
+      "ttft_ms": 15.321800019592047,
+      "total_ms": 2142.6832000142895,
+      "token_chunks": 128,
+      "text_len": 652
+    }
+  ]
+}

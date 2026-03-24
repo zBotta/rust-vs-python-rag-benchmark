@@ -7,6 +7,7 @@
 //! and writes `metrics_rust.jsonl` to `output_dir`.
 
 mod config;
+pub mod logger;
 mod dataset_loader;
 mod chunker;
 mod embedder;
@@ -46,6 +47,27 @@ fn main() {
         eprintln!("Fatal: cannot create output directory '{}': {}", cfg.output_dir, e);
         std::process::exit(1);
     }
+
+    // -----------------------------------------------------------------------
+    // 1a. Construct BenchmarkLogger
+    // -----------------------------------------------------------------------
+    let min_level = match cfg.log_level.to_uppercase().as_str() {
+        "DEBUG"   => logger::LogLevel::Debug,
+        "INFO"    => logger::LogLevel::Info,
+        "WARNING" => logger::LogLevel::Warning,
+        "ERROR"   => logger::LogLevel::Error,
+        other => {
+            eprintln!("Warning: unrecognised log_level '{}'; falling back to INFO", other);
+            logger::LogLevel::Info
+        }
+    };
+    let mut logger = logger::BenchmarkLogger::new(&cfg.output_dir, &cfg.llm_backend, "rust", min_level)
+        .unwrap_or_else(|e| {
+            eprintln!("Warning: failed to create logger: {}", e);
+            // Fallback: create logger writing to a temp location
+            logger::BenchmarkLogger::new("/tmp", &cfg.llm_backend, "rust", min_level)
+                .expect("Failed to create fallback logger")
+        });
 
     // -----------------------------------------------------------------------
     // 1b. Select LLM client based on llm_backend
@@ -132,6 +154,8 @@ fn main() {
     // 2. Load documents
     // -----------------------------------------------------------------------
     println!("Loading documents...");
+    logger.log_loading_start(&cfg.dataset_name, &cfg.dataset_subset, cfg.num_documents);
+    let load_start = Instant::now();
     let docs = match dataset_loader::load_documents(
         &cfg.dataset_name,
         &cfg.dataset_subset,
@@ -139,45 +163,65 @@ fn main() {
     ) {
         Ok(d) => d,
         Err(e) => {
+            logger.log_loading_error(&e.to_string());
             eprintln!("Fatal: failed to load dataset: {}", e);
             std::process::exit(1);
         }
     };
+    let load_elapsed_ms = load_start.elapsed().as_secs_f64() * 1000.0;
+    logger.log_loading_complete(docs.len(), load_elapsed_ms);
     println!("Loaded {} documents.", docs.len());
 
     // -----------------------------------------------------------------------
     // 3. Chunk documents
     // -----------------------------------------------------------------------
     println!("Chunking documents...");
+    logger.log_chunking_start(cfg.chunk_size, cfg.chunk_overlap);
+    let chunk_start = Instant::now();
     let chunks = chunker::chunk_documents(&docs, cfg.chunk_size, cfg.chunk_overlap);
+    let chunk_elapsed_ms = chunk_start.elapsed().as_secs_f64() * 1000.0;
+    logger.log_chunking_complete(chunks.len(), chunk_elapsed_ms);
+    if chunks.is_empty() && !docs.is_empty() {
+        logger.log_chunking_zero_warning();
+    }
     println!("Produced {} chunks.", chunks.len());
 
     // -----------------------------------------------------------------------
     // 4. Embed all chunks — record embedding_phase_ms
     // -----------------------------------------------------------------------
     println!("Embedding chunks...");
+    logger.log_embedding_start(&cfg.embedding_model, chunks.len());
     let embed_start = Instant::now();
     let embeddings: Vec<[f32; 384]> = match embedder::embed_chunks(&chunks) {
         Ok(e) => e,
         Err(e) => {
+            logger.log_embedding_error(&e.to_string());
             eprintln!("Fatal: embedding failed: {}", e);
             std::process::exit(1);
         }
     };
     let embedding_phase_ms = embed_start.elapsed().as_secs_f64() * 1000.0;
+    // Emit progress records every 100 chunks
+    for i in (100..=chunks.len()).step_by(100) {
+        logger.log_embedding_progress(i);
+    }
+    logger.log_embedding_complete(embedding_phase_ms);
     println!("Embedding done in {:.1} ms.", embedding_phase_ms);
 
     // -----------------------------------------------------------------------
     // 5. Build vector index — record index_build_ms
     // -----------------------------------------------------------------------
     println!("Building vector index...");
+    logger.log_index_build_start(embeddings.len());
     let mut vs = VectorStore::new(384);
     let index_start = Instant::now();
     if let Err(e) = vs.build_index(&embeddings) {
+        logger.log_index_build_error(&e.to_string());
         eprintln!("Fatal: failed to build vector index: {}", e);
         std::process::exit(1);
     }
     let index_build_ms = index_start.elapsed().as_secs_f64() * 1000.0;
+    logger.log_index_build_complete(index_build_ms);
     println!("Index built in {:.1} ms.", index_build_ms);
 
     let retriever = Retriever::new(chunks.clone(), vs);
@@ -258,10 +302,12 @@ fn main() {
 
         // a. Retrieve top-k chunks — record retrieval_ms
         let retrieval_start = Instant::now();
+        logger.log_retrieval_start(query_id);
         let retrieved_chunks = match retriever.retrieve(&query_embedding, cfg.top_k) {
             Ok(c) => c,
             Err(e) => {
                 let end_to_end_ms = e2e_start.elapsed().as_secs_f64() * 1000.0;
+                logger.log_retrieval_error(query_id, &e.to_string());
                 eprintln!("Warning: retrieval failed for query {}: {}", query_id, e);
                 query_metrics_list.push(QueryMetrics {
                     query_id,
@@ -277,12 +323,15 @@ fn main() {
             }
         };
         let retrieval_ms = retrieval_start.elapsed().as_secs_f64() * 1000.0;
+        logger.log_retrieval_complete(query_id, retrieved_chunks.len(), retrieval_ms);
 
     // b. Generate answer — record ttft_ms, generation_ms, total_tokens
+        logger.log_generation_start(query_id, retrieved_chunks.len());
         let response = match llm_client_arc.generate(&question, &retrieved_chunks) {
             Ok(r) => r,
             Err(e) => {
                 let end_to_end_ms = e2e_start.elapsed().as_secs_f64() * 1000.0;
+                logger.log_generation_error(query_id, &e.to_string());
                 eprintln!("Warning: LLM call failed for query {}: {}", query_id, e);
                 query_metrics_list.push(QueryMetrics {
                     query_id,
@@ -303,6 +352,8 @@ fn main() {
 
         // d. Create QueryMetrics record
         let qm = if response.failed {
+            let reason = response.failure_reason.as_deref().unwrap_or("unknown");
+            logger.log_generation_failed_response(query_id, reason);
             QueryMetrics {
                 query_id,
                 end_to_end_ms,
@@ -314,6 +365,7 @@ fn main() {
                 failure_reason: response.failure_reason,
             }
         } else {
+            logger.log_generation_complete(query_id, response.total_tokens as usize, response.ttft_ms, response.generation_ms);
             QueryMetrics {
                 query_id,
                 end_to_end_ms,
@@ -363,6 +415,7 @@ fn main() {
         "p50={:.1} ms  p95={:.1} ms  failures={}/{}",
         p50, p95, failure_count, total_queries
     );
+    logger.log_run_summary(total_queries, failure_count, p50, p95, &output_path.display().to_string());
 
     // -----------------------------------------------------------------------
     // 10. Run stress test phase if enabled
@@ -430,6 +483,7 @@ fn main() {
                 stress_summary.peak_rss_mb,
                 stress_summary.p99_latency_ms,
             );
+            logger.log_stress_summary(stress_summary.queries_per_second, stress_summary.peak_rss_mb, stress_summary.p99_latency_ms);
         }
     }
 }

@@ -401,6 +401,7 @@ def test_preservation_llama_cpp_no_httpx_get_to_api_tags():
             patch("python_pipeline.pipeline.VectorStore", mock_vs_cls),
             patch("python_pipeline.pipeline.Retriever", mock_retriever_cls),
             patch("python_pipeline.pipeline.llm_client_llama_cpp.generate", return_value=mock_llama_response),
+            patch("python_pipeline.pipeline._preflight_gguf"),
             patch("httpx.get", side_effect=tracking_httpx_get),
         ):
             run_pipeline(str(config_path))

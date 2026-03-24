@@ -1,0 +1,6 @@
+{"type":"query","query_id":0,"end_to_end_ms":17796.2279,"retrieval_ms":0.2326,"ttft_ms":1.5521,"generation_ms":13563.888500000001,"total_tokens":0,"failed":false,"failure_reason":null}
+{"type":"query","query_id":1,"end_to_end_ms":14221.3079,"retrieval_ms":0.24830000000000002,"ttft_ms":1.7471999999999999,"generation_ms":11503.6074,"total_tokens":0,"failed":false,"failure_reason":null}
+{"type":"query","query_id":2,"end_to_end_ms":19929.7404,"retrieval_ms":0.2327,"ttft_ms":1.7196,"generation_ms":16839.7605,"total_tokens":0,"failed":false,"failure_reason":null}
+{"type":"query","query_id":3,"end_to_end_ms":11820.260100000001,"retrieval_ms":0.24020000000000002,"ttft_ms":1.6121,"generation_ms":8351.3588,"total_tokens":0,"failed":false,"failure_reason":null}
+{"type":"query","query_id":4,"end_to_end_ms":10107.664700000001,"retrieval_ms":0.2417,"ttft_ms":1.4128999999999998,"generation_ms":7649.9181,"total_tokens":0,"failed":false,"failure_reason":null}
+{"type":"summary","embedding_phase_ms":5765.8094,"index_build_ms":273.72819999999996,"p50_latency_ms":14221.3079,"p95_latency_ms":19503.0379,"failure_count":0}

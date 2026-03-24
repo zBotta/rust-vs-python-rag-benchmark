@@ -1,0 +1,9 @@
+2026-03-24T13:15:02.591Z [INFO] [loading] Starting dataset load: wikimedia/wikipedia / 20231101.simple, requested=5 docs
+2026-03-24T13:15:02.908Z [INFO] [loading] Loading complete: 5 docs loaded in 317.0 ms
+2026-03-24T13:15:02.909Z [INFO] [chunking] Starting chunking: chunk_size=512, overlap=64
+2026-03-24T13:15:02.909Z [INFO] [chunking] Chunking complete: 99 chunks produced in 0.8 ms
+2026-03-24T13:15:02.910Z [INFO] [embedding] Starting embedding: model=sentence-transformers/all-MiniLM-L6-v2, num_chunks=99
+2026-03-24T13:15:04.267Z [INFO] [embedding] Embedding complete in 1357.1 ms
+2026-03-24T13:15:04.268Z [INFO] [index_build] Starting index build: num_embeddings=99
+2026-03-24T13:15:04.281Z [INFO] [index_build] Index build complete in 13.0 ms
+2026-03-24T13:15:36.539Z [INFO] [summary] Run complete: total_queries=5, failures=0, p50_ms=6692.5, p95_ms=7286.8, output=output_debug\metrics_python_llama_cpp.jsonl

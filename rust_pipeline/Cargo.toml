@@ -29,10 +29,12 @@ llama_cpp = { version = "0.3", optional = true }
 rayon = "1"
 sysinfo = "0.31"
 dirs-next = "2"
+chrono = "0.4"
 
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"
+regex = "1"
 
 [features]
 # Enable the llama_cpp in-process backend (requires libclang / LLVM installed).

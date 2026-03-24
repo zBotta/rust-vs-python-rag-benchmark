@@ -1,0 +1,9 @@
+2026-03-24T13:15:43.766Z [INFO] [loading] Starting dataset load: wikimedia/wikipedia/20231101.simple, requested=5 docs
+2026-03-24T13:15:43.800Z [INFO] [loading] Loading complete: 5 docs loaded in 33.7 ms
+2026-03-24T13:15:43.801Z [INFO] [chunking] Starting chunking: chunk_size=512 overlap=64
+2026-03-24T13:15:43.801Z [INFO] [chunking] Chunking complete: 92 chunks in 0.3 ms
+2026-03-24T13:15:43.801Z [INFO] [embedding] Starting embedding: model=sentence-transformers/all-MiniLM-L6-v2 num_chunks=92
+2026-03-24T13:15:49.567Z [INFO] [embedding] Embedding complete in 5765.8 ms
+2026-03-24T13:15:49.568Z [INFO] [index_build] Starting index build: num_embeddings=92
+2026-03-24T13:15:49.842Z [INFO] [index_build] Index build complete in 273.7 ms
+2026-03-24T13:17:03.721Z [INFO] [summary] Run complete: total_queries=5 failures=0 p50_ms=14221.3 p95_ms=19503.0 output=output_debug/metrics_rust_llama_cpp.jsonl

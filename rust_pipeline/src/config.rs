@@ -46,6 +46,7 @@ struct RawConfig {
     // Optional with defaults
     llm_backend: Option<String>,
     gguf_model_path: Option<String>,
+    log_level: Option<String>,
     // Optional subsection
     stress_test: Option<RawStressTestConfig>,
 }
@@ -84,6 +85,7 @@ pub struct BenchmarkConfig {
     pub output_dir: String,
     pub llm_backend: String,
     pub gguf_model_path: String,
+    pub log_level: String,
     pub stress_test: StressTestConfig,
 }
 
@@ -121,6 +123,7 @@ pub fn load_config(config_path: impl AsRef<Path>) -> Result<BenchmarkConfig, Con
     // Apply defaults for optional fields.
     let llm_backend = raw.llm_backend.unwrap_or_else(|| "ollama_http".to_string());
     let gguf_model_path = raw.gguf_model_path.unwrap_or_default();
+    let log_level = raw.log_level.unwrap_or_else(|| "INFO".to_string());
 
     // Validate: gguf_model_path is required for in-process backends.
     if (llm_backend == "llama_cpp" || llm_backend == "llm_rs") && gguf_model_path.is_empty() {
@@ -161,6 +164,7 @@ pub fn load_config(config_path: impl AsRef<Path>) -> Result<BenchmarkConfig, Con
         output_dir: require_str!(raw, output_dir),
         llm_backend,
         gguf_model_path,
+        log_level,
         stress_test,
     })
 }
@@ -195,6 +199,7 @@ mod tests {
     const OPTIONAL_KEYS_AND_DEFAULTS: &[(&str, &str)] = &[
         ("llm_backend", "ollama_http"),
         ("gguf_model_path", ""),
+        ("log_level", "INFO"),
     ];
     /// Build a complete valid TOML string.
     fn full_toml() -> String {
@@ -312,6 +317,7 @@ output_dir      = "output/"
             let actual = match key {
                 "llm_backend" => cfg.llm_backend.clone(),
                 "gguf_model_path" => cfg.gguf_model_path.clone(),
+                "log_level" => cfg.log_level.clone(),
                 _ => panic!("Unknown optional key: {}", key),
             };
             prop_assert_eq!(

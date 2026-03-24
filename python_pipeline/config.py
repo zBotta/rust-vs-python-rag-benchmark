@@ -34,6 +34,7 @@ REQUIRED_KEYS: list[str] = [
 OPTIONAL_DEFAULTS: dict[str, object] = {
     "llm_backend": "ollama_http",
     "gguf_model_path": "",
+    "log_level": "INFO",
 }
 
 
@@ -60,6 +61,7 @@ class BenchmarkConfig:
     output_dir: str
     llm_backend: str
     gguf_model_path: str
+    log_level: str
     stress_test: StressTestConfig
 
 
@@ -127,5 +129,6 @@ def load_config(config_path: str | Path = "benchmark_config.toml") -> BenchmarkC
         output_dir=raw["output_dir"],
         llm_backend=llm_backend,
         gguf_model_path=gguf_model_path,
+        log_level=str(raw["log_level"]),
         stress_test=stress_test,
     )

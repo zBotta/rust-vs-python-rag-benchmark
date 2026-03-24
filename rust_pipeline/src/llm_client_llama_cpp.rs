@@ -23,6 +23,21 @@
 
 use std::time::Instant;
 
+fn env_bool(key: &str, default: bool) -> bool {
+    match std::env::var(key) {
+        Ok(v) => match v.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => default,
+        },
+        Err(_) => default,
+    }
+}
+
+fn env_u32(key: &str) -> Option<u32> {
+    std::env::var(key).ok().and_then(|v| v.trim().parse::<u32>().ok())
+}
+
 #[cfg(feature = "llama_cpp_backend")]
 use llama_cpp::{
     standard_sampler::StandardSampler,
@@ -59,10 +74,26 @@ impl LlamaCppClient {
         }
 
         let mut params = LlamaParams::default();
-        // Prefer conservative defaults for wider compatibility on Windows.
-        params.n_gpu_layers = 0;
-        params.use_mmap = false;
-        params.use_mlock = false;
+
+        // Conservative mode is default for compatibility. Set
+        // RUST_LLAMA_CPP_CONSERVATIVE=0 to test less restrictive params.
+        let conservative = env_bool("RUST_LLAMA_CPP_CONSERVATIVE", true);
+        if conservative {
+            params.n_gpu_layers = 0;
+            params.use_mmap = false;
+            params.use_mlock = false;
+        } else {
+            params.use_mmap = env_bool("RUST_LLAMA_CPP_USE_MMAP", params.use_mmap);
+            params.use_mlock = env_bool("RUST_LLAMA_CPP_USE_MLOCK", params.use_mlock);
+            if let Some(v) = env_u32("RUST_LLAMA_CPP_N_GPU_LAYERS") {
+                params.n_gpu_layers = v;
+            }
+        }
+
+        println!(
+            "llama_cpp loader params: conservative={}, n_gpu_layers={}, use_mmap={}, use_mlock={}",
+            conservative, params.n_gpu_layers, params.use_mmap, params.use_mlock
+        );
 
         let model = LlamaModel::load_from_file(model_path, params).map_err(|e| {
             LlmError::RequestFailed(format!(
@@ -81,9 +112,10 @@ impl LlmClient for LlamaCppClient {
         let prompt = build_prompt(chunks, query);
 
         let mut session_params = SessionParams::default();
-        session_params.n_ctx = 4096;
-        session_params.n_batch = 4096;
-        session_params.n_ubatch = 4096;
+        // Keep session context aligned with Python llama-cpp settings.
+        session_params.n_ctx = 2048;
+        session_params.n_batch = 2048;
+        session_params.n_ubatch = 2048;
 
         let mut ctx = match self.model.create_session(session_params) {
             Ok(s) => s,

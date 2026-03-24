@@ -184,6 +184,13 @@ Each backend writes to its own output files so nothing is overwritten:
 - `output/benchmark_report_llama_cpp.md`
 - `output/benchmark_report_llm_rs.md`
 
+In addition, each pipeline run writes a structured log file alongside the metrics:
+- `output/ollama_http-python.log` / `output/ollama_http-rust.log`
+- `output/llama_cpp-python.log` / `output/llama_cpp-rust.log`
+- `output/llm_rs-rust.log`
+
+See [Benchmark Logs](#benchmark-logs) for the log format and configuration.
+
 ---
 
 ## Configuration
@@ -284,6 +291,36 @@ cargo run --release --manifest-path rust_pipeline/Cargo.toml --features llama_cp
 
 The probe prints file metadata and attempts model loading with multiple parameter sets to provide more detailed failure context.
 
+### llama.cpp Runtime Parity Microbenchmark
+
+To isolate llama.cpp generation runtime (without dataset/chunking/embedding/index overhead), run the generation-only microbench in both languages with the same prompt and token settings.
+
+Python:
+
+```powershell
+uv run python scripts/llama_cpp_microbench.py --model "C:\Users\you\.models\qwen2.5-0.5b-instruct-q4_k_m.gguf" --n-ctx 2048 --max-tokens 128 --warmup 1 --repeats 5 --output output_debug/llama_cpp_microbench_python.json
+```
+
+Rust (conservative mode):
+
+```powershell
+$llvmBin = "C:\Program Files\LLVM\bin"
+$env:PATH = "$llvmBin;$env:PATH"
+$env:LIBCLANG_PATH = $llvmBin
+$env:NM_PATH = "$llvmBin\llvm-nm.exe"
+$env:OBJCOPY_PATH = "$llvmBin\llvm-objcopy.exe"
+
+cargo run --release --manifest-path rust_pipeline/Cargo.toml --features llama_cpp_backend --bin llama_cpp_microbench -- --model "C:\Users\you\.models\qwen2.5-0.5b-instruct-q4_k_m.gguf" --n-ctx 2048 --max-tokens 128 --warmup 1 --repeats 5 --conservative 1 --output output_debug/llama_cpp_microbench_rust_conservative.json
+```
+
+Rust (non-conservative mode, mmap enabled):
+
+```powershell
+cargo run --release --manifest-path rust_pipeline/Cargo.toml --features llama_cpp_backend --bin llama_cpp_microbench -- --model "C:\Users\you\.models\qwen2.5-0.5b-instruct-q4_k_m.gguf" --n-ctx 2048 --max-tokens 128 --warmup 1 --repeats 5 --conservative 0 --use-mmap 1 --use-mlock 0 --output output_debug/llama_cpp_microbench_rust_nonconservative.json
+```
+
+Compare `mean_total_ms`, `p50_total_ms`, and `p95_total_ms` between JSON outputs.
+
 ### Stress Test Mode
 
 Set `stress_test.enabled = true` in `benchmark_config.toml` to run a concurrent load test after the standard sequential benchmark:
@@ -299,6 +336,70 @@ query_repetitions = 10       # query set repeated N times
 Stress test results are appended to the JSONL files as a `stress_summary` record and included in the report with throughput (QPS), peak RSS (MB), and p50/p95/p99 latency columns.
 
 `concurrency` must be ≥ 1; the config loader returns an error otherwise.
+
+---
+
+## Benchmark Logs
+
+Both pipelines write a structured log file for every run. The file is created (or truncated) at startup and written to `{output_dir}/{backend}-{language}.log`.
+
+### Log file naming
+
+| Pipeline | Backend | Log file |
+|---|---|---|
+| Python | `ollama_http` | `output/ollama_http-python.log` |
+| Python | `llama_cpp` | `output/llama_cpp-python.log` |
+| Rust | `ollama_http` | `output/ollama_http-rust.log` |
+| Rust | `llama_cpp` | `output/llama_cpp-rust.log` |
+| Rust | `llm_rs` | `output/llm_rs-rust.log` |
+
+### Log record format
+
+Each record is a single line:
+
+```
+2024-01-15T10:23:45.123Z [INFO] [loading] Starting dataset load: wikimedia/wikipedia / 20231101.simple, requested=1000 docs
+```
+
+Fields in order:
+
+| Field | Format | Example |
+|---|---|---|
+| Timestamp | ISO-8601 UTC with millisecond precision | `2024-01-15T10:23:45.123Z` |
+| Level | `[DEBUG]` / `[INFO]` / `[WARNING]` / `[ERROR]` | `[INFO]` |
+| Stage | `[loading]` / `[chunking]` / `[embedding]` / `[index_build]` / `[retrieval]` / `[generation]` / `[summary]` | `[loading]` |
+| Message | Free-form text | `Starting dataset load: ...` |
+
+### Log levels
+
+| Level | Numeric | What is logged |
+|---|---|---|
+| `DEBUG` | 0 | Per-query retrieval/generation start+complete, embedding batch progress every 100 chunks |
+| `INFO` | 1 | Stage start/complete events, run summary (default) |
+| `WARNING` | 2 | Zero-chunk output, failed LLM responses, unrecognised `log_level` value |
+| `ERROR` | 3 | Exceptions in loading, embedding, index build, retrieval, generation |
+
+### Configuring the log level
+
+Set `log_level` in `benchmark_config.toml` (optional, defaults to `INFO`):
+
+```toml
+# log_level = "INFO"  # DEBUG | INFO | WARNING | ERROR  (default: INFO)
+```
+
+If an unrecognised value is supplied, both pipelines emit a `WARNING` to stderr and fall back to `INFO`.
+
+### What each stage logs
+
+| Stage | INFO records | DEBUG records |
+|---|---|---|
+| `loading` | start (dataset, subset, requested count), complete (actual count, elapsed ms) | — |
+| `chunking` | start (chunk size, overlap), complete (chunk count, elapsed ms), zero-chunk warning | — |
+| `embedding` | start (model, chunk count), complete (elapsed ms) | progress every 100 chunks embedded |
+| `index_build` | start (embedding count), complete (elapsed ms) | — |
+| `retrieval` | — | start (query id), complete (query id, chunks retrieved, elapsed ms) |
+| `generation` | — | start (query id, context chunks), complete (query id, tokens, TTFT ms, generation ms) |
+| `summary` | run complete (total queries, failures, p50 ms, p95 ms, output path), stress complete (QPS, peak RSS MB, p99 ms) | — |
 
 ---
 
@@ -409,6 +510,7 @@ rust-vs-python-rag/
 ├── python_pipeline/         # Python RAG implementation
 │   ├── pipeline.py          # Entry point (wires all components)
 │   ├── stress_runner.py     # Concurrent stress test dispatcher
+│   ├── logger.py            # Structured per-backend log writer
 │   ├── dataset_loader.py
 │   ├── chunker.py
 │   ├── embedder.py          # ONNX Runtime inference
@@ -421,6 +523,7 @@ rust-vs-python-rag/
 ├── rust_pipeline/           # Rust RAG implementation
 │   └── src/
 │       ├── main.rs          # Entry point
+│       ├── logger.rs        # Structured per-backend log writer
 │       ├── stress_runner.rs # Concurrent stress test dispatcher
 │       ├── embedder.rs      # ort (ONNX Runtime) inference
 │       ├── llm_client.rs    # Ollama HTTP client

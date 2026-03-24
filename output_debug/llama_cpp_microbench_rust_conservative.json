@@ -1,0 +1,21 @@
+{
+  "language": "rust",
+  "backend": "llama_cpp",
+  "model": "C:\\Users\\mbottari\\.models\\qwen2.5-0.5b-instruct-q4_k_m.gguf",
+  "n_ctx": 2048,
+  "max_tokens": 128,
+  "warmup": 1,
+  "repeats": 3,
+  "conservative": true,
+  "use_mmap": true,
+  "use_mlock": false,
+  "prompt_len": 54,
+  "mean_ttft_ms": 1.6025,
+  "p50_ttft_ms": 1.4588,
+  "p95_ttft_ms": 1.9835,
+  "mean_total_ms": 3925.1615,
+  "p50_total_ms": 3978.5735,
+  "p95_total_ms": 3980.5962,
+  "mean_token_chunks": 129.0000,
+  "runs": [{"run":0,"ttft_ms":1.4588,"total_ms":3978.5735,"token_chunks":129,"text_len":727},{"run":1,"ttft_ms":2.0418,"total_ms":3980.8209,"token_chunks":129,"text_len":555},{"run":2,"ttft_ms":1.3069,"total_ms":3816.0900,"token_chunks":129,"text_len":569}]
+}

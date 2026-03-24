@@ -12,8 +12,9 @@ top_k           = 5
 llm_model       = "qwen2.5-0.5b-instruct-q4_k_m"
 llm_host        = "http://localhost:11434"
 llm_backend     = "llama_cpp"
+# log_level = "INFO"  # DEBUG | INFO | WARNING | ERROR  (default: INFO)
 gguf_model_path = "C:\\Users\\mbottari\\.models\\qwen2.5-0.5b-instruct-q4_k_m.gguf"
-query_set_path  = "query_set.json" # query_set_debug.json
+query_set_path  = "query_set.json" # query_set_debug.json, "query_set.json"
 output_dir      = "output/"
 
 [stress_test]
